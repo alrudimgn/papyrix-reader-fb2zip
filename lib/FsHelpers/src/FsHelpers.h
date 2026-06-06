@@ -54,12 +54,15 @@ class FsHelpers {
   static inline bool isFb2File(const char* path) { return hasExtension(path, ".fb2"); }
   static inline bool isFb2File(const std::string& path) { return isFb2File(path.c_str()); }
 
+  static inline bool isZipFile(const char* path) { return hasExtension(path, ".zip"); }
+  static inline bool isZipFile(const std::string& path) { return isZipFile(path.c_str()); }
+
   static inline bool isHtmlFile(const char* path) { return hasExtension(path, ".html") || hasExtension(path, ".htm"); }
   static inline bool isHtmlFile(const std::string& path) { return isHtmlFile(path.c_str()); }
 
   static inline bool isSupportedBookFile(const char* path) {
     return isEpubFile(path) || isXtcFile(path) || isTxtFile(path) || isMarkdownFile(path) || isFb2File(path) ||
-           isHtmlFile(path);
+           isZipFile(path) || isHtmlFile(path);
   }
   static inline bool isSupportedBookFile(const std::string& path) { return isSupportedBookFile(path.c_str()); }
 };

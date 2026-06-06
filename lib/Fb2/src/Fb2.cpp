@@ -19,6 +19,7 @@
 #include <Serialization.h>
 
 #include <cstring>
+#include <functional>
 
 namespace {
 constexpr uint8_t kMetaCacheVersion = 6;
@@ -26,18 +27,125 @@ constexpr char kMetaCacheFile[] = "/meta.bin";
 constexpr char kSectionFilePrefix[] = "/section_";
 constexpr char kSectionFileSuffix[] = ".fb2";
 constexpr char kSectionCacheMarker[] = "/.section_cache_v2";
+
+void writeLe16(Print& out, const uint16_t value) {
+  out.write(value & 0xFF);
+  out.write((value >> 8) & 0xFF);
+}
+
+void writeLe32(Print& out, const uint32_t value) {
+  out.write(value & 0xFF);
+  out.write((value >> 8) & 0xFF);
+  out.write((value >> 16) & 0xFF);
+  out.write((value >> 24) & 0xFF);
+}
+
+void writeLe32Signed(Print& out, const int32_t value) { writeLe32(out, static_cast<uint32_t>(value)); }
+
+bool fallbackGlyphPixel(char c, int x, int y) {
+  static constexpr uint8_t F[7] = {0b11111, 0b10000, 0b10000, 0b11110, 0b10000, 0b10000, 0b10000};
+  static constexpr uint8_t B[7] = {0b11110, 0b10001, 0b10001, 0b11110, 0b10001, 0b10001, 0b11110};
+  static constexpr uint8_t N2[7] = {0b11110, 0b00001, 0b00001, 0b11110, 0b10000, 0b10000, 0b11111};
+  const uint8_t* glyph = (c == 'F') ? F : (c == 'B') ? B : N2;
+  return (glyph[y] & (1 << (4 - x))) != 0;
+}
+
+bool writeFallbackCoverBmp(const std::string& outputPath) {
+  constexpr int width = 450;
+  constexpr int height = 750;
+  constexpr int rowBytes = ((width + 31) / 32) * 4;
+  constexpr uint32_t pixelOffset = 62;
+  constexpr uint32_t imageSize = rowBytes * height;
+  constexpr uint32_t fileSize = pixelOffset + imageSize;
+
+  FsFile out;
+  if (!SdMan.openFileForWrite("FB2", outputPath, out)) {
+    return false;
+  }
+
+  out.write('B');
+  out.write('M');
+  writeLe32(out, fileSize);
+  writeLe32(out, 0);
+  writeLe32(out, pixelOffset);
+  writeLe32(out, 40);
+  writeLe32Signed(out, width);
+  writeLe32Signed(out, -height);
+  writeLe16(out, 1);
+  writeLe16(out, 1);
+  writeLe32(out, 0);
+  writeLe32(out, imageSize);
+  writeLe32(out, 2835);
+  writeLe32(out, 2835);
+  writeLe32(out, 2);
+  writeLe32(out, 2);
+
+  const uint8_t palette[8] = {
+      0x00, 0x00, 0x00, 0x00,  // black
+      0xFF, 0xFF, 0xFF, 0x00   // white
+  };
+  out.write(palette, sizeof(palette));
+
+  uint8_t row[rowBytes];
+  constexpr int glyphScale = 28;
+  constexpr int glyphW = 5 * glyphScale;
+  constexpr int glyphH = 7 * glyphScale;
+  constexpr int glyphGap = 14;
+  constexpr int textW = glyphW * 3 + glyphGap * 2;
+  constexpr int textX = (width - textW) / 2;
+  constexpr int textY = (height - glyphH) / 2 - 20;
+  constexpr char label[] = {'F', 'B', '2'};
+
+  for (int y = 0; y < height; y++) {
+    memset(row, 0xFF, sizeof(row));
+    for (int x = 0; x < width; x++) {
+      bool black = false;
+      if (x < 8 || x >= width - 8 || y < 8 || y >= height - 8) {
+        black = true;
+      } else if ((x + y) % 97 == 0 || (x - y + height) % 113 == 0) {
+        black = true;
+      }
+
+      for (int gi = 0; gi < 3 && !black; gi++) {
+        const int gx = x - (textX + gi * (glyphW + glyphGap));
+        const int gy = y - textY;
+        if (gx >= 0 && gx < glyphW && gy >= 0 && gy < glyphH) {
+          black = fallbackGlyphPixel(label[gi], gx / glyphScale, gy / glyphScale);
+        }
+      }
+
+      if (black) {
+        row[x / 8] &= static_cast<uint8_t>(~(1 << (7 - (x % 8))));
+      }
+    }
+    if (out.write(row, sizeof(row)) != sizeof(row)) {
+      out.close();
+      SdMan.remove(outputPath.c_str());
+      return false;
+    }
+  }
+
+  out.close();
+  LOG_INF(TAG, "Generated fallback FB2 cover: %s", outputPath.c_str());
+  return true;
+}
 }  // namespace
 
 std::string Fb2::metaCachePath() const { return cachePath + kMetaCacheFile; }
 
-Fb2::Fb2(std::string filepath, const std::string& cacheDir)
+Fb2::Fb2(std::string filepath, const std::string& cacheDir, std::string forcedCachePath, std::string originalPath)
     : filepath(std::move(filepath)), fileSize(0), loaded(false) {
-  // Create cache key based on filepath (same as Epub/Xtc/Txt)
-  cachePath = cacheDir + "/fb2_" + std::to_string(std::hash<std::string>{}(this->filepath));
+  if (!forcedCachePath.empty()) {
+    cachePath = std::move(forcedCachePath);
+  } else {
+    // Create cache key based on filepath (same as Epub/Xtc/Txt)
+    cachePath = cacheDir + "/fb2_" + std::to_string(std::hash<std::string>{}(this->filepath));
+  }
 
   // Extract title from filename
-  size_t lastSlash = this->filepath.find_last_of('/');
-  size_t lastDot = this->filepath.find_last_of('.');
+  const std::string& pathForTitle = originalPath.empty() ? this->filepath : originalPath;
+  size_t lastSlash = pathForTitle.find_last_of('/');
+  size_t lastDot = pathForTitle.find_last_of('.');
 
   if (lastSlash == std::string::npos) {
     lastSlash = 0;
@@ -46,9 +154,9 @@ Fb2::Fb2(std::string filepath, const std::string& cacheDir)
   }
 
   if (lastDot == std::string::npos || lastDot <= lastSlash) {
-    title = this->filepath.substr(lastSlash);
+    title = pathForTitle.substr(lastSlash);
   } else {
-    title = this->filepath.substr(lastSlash, lastDot - lastSlash);
+    title = pathForTitle.substr(lastSlash, lastDot - lastSlash);
   }
 }
 
@@ -999,9 +1107,13 @@ bool Fb2::generateCoverBmp(bool use1BitDithering) const {
     return true;
   }
 
-  // Previously failed, don't retry
+  // Retry embedded covers after firmware updates: progressive JPEGs used to
+  // create this marker, but now fall back to a generated BMP placeholder.
   if (SdMan.exists(failedMarkerPath.c_str())) {
-    return false;
+    if (coverRef.empty()) {
+      return false;
+    }
+    SdMan.remove(failedMarkerPath.c_str());
   }
 
   // Find a cover image (external file in same directory)
@@ -1036,7 +1148,12 @@ bool Fb2::generateCoverBmp(bool use1BitDithering) const {
   setupCacheDir();
 
   // Convert to BMP using shared helper
-  const bool success = CoverHelpers::convertImageToBmp(coverImagePath, coverBmpPath, "FB2", use1BitDithering);
+  bool success = CoverHelpers::convertImageToBmp(coverImagePath, coverBmpPath, "FB2", use1BitDithering);
+
+  if (!success && !tmpCoverPath.empty()) {
+    LOG_INF(TAG, "Embedded cover conversion failed, generating fallback cover");
+    success = writeFallbackCoverBmp(coverBmpPath);
+  }
 
   // Clean up temp file
   if (!tmpCoverPath.empty()) {
@@ -1063,9 +1180,13 @@ bool Fb2::generateThumbBmp() const {
     return true;
   }
 
-  // Previously failed, don't retry
+  // If a cover exists now or an embedded cover can produce a fallback, allow
+  // thumbnail retry after older failures.
   if (SdMan.exists(failedMarkerPath.c_str())) {
-    return false;
+    if (!SdMan.exists(getCoverBmpPath().c_str()) && coverRef.empty()) {
+      return false;
+    }
+    SdMan.remove(failedMarkerPath.c_str());
   }
 
   if (!SdMan.exists(getCoverBmpPath().c_str()) && !generateCoverBmp(true)) {

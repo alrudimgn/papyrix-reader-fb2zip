@@ -93,7 +93,8 @@ class Fb2 {
   std::string sectionFilePath(int sectionIndex) const;
 
  public:
-  explicit Fb2(std::string filepath, const std::string& cacheDir);
+  explicit Fb2(std::string filepath, const std::string& cacheDir, std::string forcedCachePath = "",
+               std::string originalPath = "");
   ~Fb2();
 
   /**

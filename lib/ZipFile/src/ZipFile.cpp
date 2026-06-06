@@ -68,7 +68,8 @@ bool ZipFile::loadAllFileStatSlims() {
 
     file.seekCur(6);
     file.read(&fileStat.method, 2);
-    file.seekCur(8);
+    file.seekCur(4);
+    file.read(&fileStat.crc32, 4);
     file.read(&fileStat.compressedSize, 4);
     file.read(&fileStat.uncompressedSize, 4);
     uint16_t nameLen, m, k;
@@ -133,7 +134,8 @@ bool ZipFile::loadFileStatSlim(const char* filename, FileStatSlim* fileStat) {
 
     file.seekCur(6);
     file.read(&fileStat->method, 2);
-    file.seekCur(8);
+    file.seekCur(4);
+    file.read(&fileStat->crc32, 4);
     file.read(&fileStat->compressedSize, 4);
     file.read(&fileStat->uncompressedSize, 4);
     uint16_t nameLen, m, k;
@@ -219,9 +221,11 @@ bool ZipFile::loadZipDetails() {
     return false;  // Minimum EOCD size is 22 bytes
   }
 
-  // We scan the last 1KB (or the whole file if smaller) for the EOCD signature
+  // EOCD can be followed by a ZIP comment up to 65535 bytes. Scan the whole
+  // standard EOCD search range so archives with comments still open.
   // 0x06054b50 is stored as 0x50, 0x4b, 0x05, 0x06 in little-endian
-  const int scanRange = fileSize > 1024 ? 1024 : fileSize;
+  constexpr size_t kMaxEocdSearch = 22 + 65535;
+  const size_t scanRange = fileSize > kMaxEocdSearch ? kMaxEocdSearch : fileSize;
   const auto buffer = static_cast<uint8_t*>(malloc(scanRange));
   if (!buffer) {
     LOG_ERR(TAG, "Failed to allocate memory for EOCD scan buffer");
@@ -236,7 +240,7 @@ bool ZipFile::loadZipDetails() {
 
   // Scan backwards for the signature
   int foundOffset = -1;
-  for (int i = scanRange - 22; i >= 0; i--) {
+  for (int i = static_cast<int>(scanRange) - 22; i >= 0; i--) {
     constexpr uint8_t signature[4] = {0x50, 0x4b, 0x05, 0x06};  // Little-endian EOCD signature
     if (memcmp(&buffer[i], signature, 4) == 0) {
       foundOffset = i;

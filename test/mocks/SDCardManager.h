@@ -109,6 +109,14 @@ class SDCardManager {
       }
       return true;
     }
+    auto writtenIt = writtenFiles_.find(path);
+    if (writtenIt != writtenFiles_.end() && writtenIt->second) {
+      file.setBuffer(*writtenIt->second);
+      if (readLimitActive_) {
+        file.setReadLimit(readLimit_);
+      }
+      return true;
+    }
     return false;
   }
 
@@ -120,7 +128,41 @@ class SDCardManager {
     (void)moduleName;
     auto buf = std::make_shared<std::string>();
     writtenFiles_[path] = buf;
+    files_.erase(path);
     file.setSharedBuffer(buf);
+    return true;
+  }
+
+  bool openFileForWrite(const char* moduleName, const char* path, FsFile& file) {
+    return openFileForWrite(moduleName, std::string(path), file);
+  }
+
+  bool remove(const char* path) {
+    files_.erase(path);
+    writtenFiles_.erase(path);
+    return true;
+  }
+
+  bool rename(const char* path, const char* newPath) {
+    auto writtenIt = writtenFiles_.find(path);
+    if (writtenIt != writtenFiles_.end()) {
+      writtenFiles_[newPath] = writtenIt->second;
+      writtenFiles_.erase(writtenIt);
+      files_.erase(newPath);
+      return true;
+    }
+    auto fileIt = files_.find(path);
+    if (fileIt != files_.end()) {
+      files_[newPath] = std::move(fileIt->second);
+      files_.erase(fileIt);
+      writtenFiles_.erase(newPath);
+      return true;
+    }
+    return false;
+  }
+
+  bool ensureDirectoryExists(const char* path) {
+    (void)path;
     return true;
   }
 

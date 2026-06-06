@@ -183,23 +183,7 @@ bool FileListState::isHidden(const char* name) const {
 }
 
 bool FileListState::isSupportedFile(const char* name) const {
-  const char* ext = strrchr(name, '.');
-  if (!ext) return false;
-  ext++;  // Skip the dot
-
-  // Case-insensitive extension check (matches ContentTypes.cpp)
-  if (strcasecmp(ext, "epub") == 0) return true;
-  if (strcasecmp(ext, "xtc") == 0) return true;
-  if (strcasecmp(ext, "xtch") == 0) return true;
-  if (strcasecmp(ext, "xtg") == 0) return true;
-  if (strcasecmp(ext, "xth") == 0) return true;
-  if (strcasecmp(ext, "txt") == 0) return true;
-  if (strcasecmp(ext, "md") == 0) return true;
-  if (strcasecmp(ext, "markdown") == 0) return true;
-  if (strcasecmp(ext, "fb2") == 0) return true;
-  if (strcasecmp(ext, "html") == 0) return true;
-  if (strcasecmp(ext, "htm") == 0) return true;
-  return false;
+  return FsHelpers::isSupportedBookFile(name);
 }
 
 StateTransition FileListState::update(Core& core) {

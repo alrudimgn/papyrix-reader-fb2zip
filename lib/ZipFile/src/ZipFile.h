@@ -24,6 +24,7 @@ class ZipFile {
  public:
   struct FileStatSlim {
     uint16_t method;             // Compression method
+    uint32_t crc32;              // CRC-32 from the central directory
     uint32_t compressedSize;     // Compressed size
     uint32_t uncompressedSize;   // Uncompressed size
     uint32_t localHeaderOffset;  // Offset of local file header

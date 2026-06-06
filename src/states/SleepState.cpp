@@ -26,6 +26,7 @@
 
 #include "../ThemeManager.h"
 #include "../config.h"
+#include "../content/Fb2Provider.h"
 #include "../core/Core.h"
 #include "../drivers/Device.h"
 #include "../images/PapyrixLogo.h"
@@ -225,6 +226,12 @@ void SleepState::renderCoverSleepScreen(Core& core) const {
     Fb2 fb2(bookPath, cacheDir);
     if (fb2.load() && fb2.generateCoverBmp(true)) {
       coverBmpPath = fb2.getCoverBmpPath();
+    }
+  } else if (FsHelpers::isZipFile(bookPath)) {
+    Fb2Provider fb2Provider;
+    if (fb2Provider.open(bookPath, cacheDir).ok() && fb2Provider.getFb2() &&
+        fb2Provider.getFb2()->generateCoverBmp(true)) {
+      coverBmpPath = fb2Provider.getFb2()->getCoverBmpPath();
     }
   } else if (FsHelpers::isHtmlFile(bookPath)) {
     Html html(bookPath, cacheDir);

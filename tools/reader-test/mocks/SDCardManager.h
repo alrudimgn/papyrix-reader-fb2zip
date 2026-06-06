@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdio>
+#include <filesystem>
 #include <functional>
 #include <string>
 #include <sys/stat.h>
@@ -43,6 +44,11 @@ class SDCardManager {
   bool remove(const char* path) { return ::remove(path) == 0; }
 
   bool rename(const char* oldPath, const char* newPath) { return ::rename(oldPath, newPath) == 0; }
+
+  bool ensureDirectoryExists(const char* path) {
+    std::error_code ec;
+    return std::filesystem::exists(path, ec) || std::filesystem::create_directories(path, ec);
+  }
 
   using RemoveDirProgress = std::function<void(int filesDeleted)>;
   bool removeDir(const char* path, RemoveDirProgress progress = nullptr) {
