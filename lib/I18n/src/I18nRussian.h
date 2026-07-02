@@ -230,6 +230,7 @@ static constexpr const char* RUSSIAN[static_cast<int>(StrId::STR__COUNT)] = {
     "Проверка...",            // VALIDATING_FIRMWARE
     "Закладка",               // BOOKMARK_VAL
     "Закладка добавлена",     // BOOKMARK_ADDED
+    "Недавняя",               // RECENT_NETWORK
 };
 // clang-format on
 
