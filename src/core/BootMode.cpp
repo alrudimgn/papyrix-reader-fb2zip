@@ -64,6 +64,13 @@ BootMode detectBootMode() {
   // No pending transition - check "Last Document" startup behavior setting
   if (core.settings.startupBehavior == Settings::StartupLastDocument && core.settings.lastBookPath[0] != '\0' &&
       SdMan.exists(core.settings.lastBookPath)) {
+    if (core.settings.lastBookBootGuard) {
+      LOG_ERR(TAG, "Previous last-document startup did not complete, booting UI: %s", core.settings.lastBookPath);
+      core.settings.lastBookBootGuard = 0;
+      core.settings.saveToFile();
+      return BootMode::UI;
+    }
+
     LOG_INF(TAG, "'Last Document' startup: %s", core.settings.lastBookPath);
 
     // Set up cached transition for reader mode
@@ -74,9 +81,10 @@ BootMode detectBootMode() {
     cachedTransition.bookPath[sizeof(cachedTransition.bookPath) - 1] = '\0';
     transitionCached = true;
 
-    // Clear lastBookPath to prevent boot loop if reader fails
-    // ReaderState will re-save it after successful open
-    core.settings.lastBookPath[0] = '\0';
+    // Keep lastBookPath so the home screen can still show the book if automatic
+    // reader startup fails. The guard is cleared after ReaderState reaches a
+    // usable state; if it is still set on the next boot, we fall back to UI.
+    core.settings.lastBookBootGuard = 1;
     core.settings.saveToFile();
 
     return BootMode::READER;

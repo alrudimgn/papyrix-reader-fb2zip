@@ -20,10 +20,10 @@ namespace {
 constexpr uint32_t SETTINGS_MAGIC = 0x53585050;
 // Minimum version we can read (allows backward compatibility)
 constexpr uint8_t MIN_SETTINGS_VERSION = 3;
-// Version 12: Added UI language setting
-constexpr uint8_t SETTINGS_FILE_VERSION = 12;
+// Version 13: Added last-book startup crash guard
+constexpr uint8_t SETTINGS_FILE_VERSION = 13;
 // Increment this when adding new persisted settings fields
-constexpr uint8_t SETTINGS_COUNT = 27;
+constexpr uint8_t SETTINGS_COUNT = 28;
 }  // namespace
 
 Result<void> Settings::save(drivers::Storage& storage) const {
@@ -71,6 +71,7 @@ Result<void> Settings::save(drivers::Storage& storage) const {
   serialization::writePod(outputFile, frontButtonLayout);
   serialization::writePod(outputFile, fullBookProcess);
   serialization::writePod(outputFile, uiLanguage);
+  serialization::writePod(outputFile, lastBookBootGuard);
   outputFile.sync();
   outputFile.close();
 
@@ -190,6 +191,8 @@ Result<void> Settings::load(drivers::Storage& storage) {
     if (++settingsRead >= fileSettingsCount) break;
     serialization::readPodValidated(inputFile, uiLanguage, uint8_t(2));
     if (++settingsRead >= fileSettingsCount) break;
+    serialization::readPodValidated(inputFile, lastBookBootGuard, uint8_t(2));
+    if (++settingsRead >= fileSettingsCount) break;
   } while (false);
 
   if (version < 8) {
@@ -280,6 +283,7 @@ bool Settings::saveToFile() const {
   serialization::writePod(outputFile, frontButtonLayout);
   serialization::writePod(outputFile, fullBookProcess);
   serialization::writePod(outputFile, uiLanguage);
+  serialization::writePod(outputFile, lastBookBootGuard);
   outputFile.sync();
   outputFile.close();
 
@@ -394,6 +398,8 @@ bool Settings::loadFromFile() {
     serialization::readPodValidated(inputFile, fullBookProcess, uint8_t(2));
     if (++settingsRead >= fileSettingsCount) break;
     serialization::readPodValidated(inputFile, uiLanguage, uint8_t(2));
+    if (++settingsRead >= fileSettingsCount) break;
+    serialization::readPodValidated(inputFile, lastBookBootGuard, uint8_t(2));
     if (++settingsRead >= fileSettingsCount) break;
   } while (false);
 

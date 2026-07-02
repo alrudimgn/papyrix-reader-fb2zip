@@ -96,6 +96,7 @@ struct Settings {
   uint8_t frontButtonLayout = FrontBCLR;
   uint8_t fullBookProcess = 0;
   uint8_t uiLanguage = LanguageEnglish;
+  uint8_t lastBookBootGuard = 0;
 
   // Persistence (using drivers::Storage wrapper)
   Result<void> load(drivers::Storage& storage);

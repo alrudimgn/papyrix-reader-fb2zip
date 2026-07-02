@@ -907,9 +907,13 @@ void ReaderState::enter(Core& core) {
 
   LOG_INF(TAG, "Loaded: %s", core.content.metadata().title);
 
-  // Full book pre-processing: index all pages before reading
+  // Full book pre-processing: index all pages before reading. Skip it for
+  // automatic last-document startup; resume should be fast and must not get
+  // stuck reprocessing a book before the UI becomes usable.
   ContentType entryType = core.content.metadata().type;
-  if (core.settings.fullBookProcess && entryType != ContentType::Xtc && !isFullyIndexed(core)) {
+  const bool automaticLastBookStartup = core.settings.lastBookBootGuard != 0;
+  if (!automaticLastBookStartup && core.settings.fullBookProcess && entryType != ContentType::Xtc &&
+      !isFullyIndexed(core)) {
     startFullBookIndexing(core);
     return;
   }
@@ -917,6 +921,11 @@ void ReaderState::enter(Core& core) {
   // Start background caching (includes thumbnail generation)
   // This runs once per book open regardless of starting position
   startBackgroundCaching(core);
+
+  if (core.settings.lastBookBootGuard) {
+    core.settings.lastBookBootGuard = 0;
+    core.settings.save(core.storage);
+  }
 }
 
 void ReaderState::exit(Core& core) {
@@ -2183,11 +2192,15 @@ void ReaderState::processIndexingChunk(Core& core) {
     return false;
   };
 
-  auto stopIndexing = [this, &theme]() {
+  auto stopIndexing = [this, &core, &theme]() {
     indexingInProgress_ = false;
     indexingFailed_ = true;
     indexingCache_.reset();
     indexingParser_.reset();
+    if (core.settings.lastBookBootGuard) {
+      core.settings.lastBookBootGuard = 0;
+      core.settings.save(core.storage);
+    }
     renderer_.clearWidthCache();
     renderer_.clearScreen(theme.backgroundColor);
     renderer_.displayBuffer(EInkDisplay::HALF_REFRESH);
@@ -2201,6 +2214,10 @@ void ReaderState::processIndexingChunk(Core& core) {
     LOG_INF(TAG, "Full book indexing complete");
     deleteMetricsIndex(core);
     invalidateGlobalPageMetrics();
+    if (core.settings.lastBookBootGuard) {
+      core.settings.lastBookBootGuard = 0;
+      core.settings.save(core.storage);
+    }
     startBackgroundCaching(core);
     renderer_.clearScreen(theme.backgroundColor);
     renderer_.displayBuffer(EInkDisplay::HALF_REFRESH);
@@ -2289,6 +2306,10 @@ void ReaderState::processIndexingChunk(Core& core) {
     LOG_INF(TAG, "Full book indexing complete");
     deleteMetricsIndex(core);
     invalidateGlobalPageMetrics();
+    if (core.settings.lastBookBootGuard) {
+      core.settings.lastBookBootGuard = 0;
+      core.settings.save(core.storage);
+    }
     startBackgroundCaching(core);
     needsRender_ = true;
     return;
