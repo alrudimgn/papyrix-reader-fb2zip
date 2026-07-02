@@ -113,6 +113,17 @@ bool Page::serialize(FsFile& file) const {
     }
   }
 
+  const uint16_t footnoteCount = std::min<uint16_t>(footnotes.size(), MAX_FOOTNOTES_PER_PAGE);
+  serialization::writePod(file, footnoteCount);
+  for (uint16_t i = 0; i < footnoteCount; i++) {
+    const auto& fn = footnotes[i];
+    if (file.write(fn.number, sizeof(fn.number)) != sizeof(fn.number) ||
+        file.write(fn.href, sizeof(fn.href)) != sizeof(fn.href)) {
+      LOG_ERR(TAG, "Failed to write footnote");
+      return false;
+    }
+  }
+
   return true;
 }
 
@@ -153,6 +164,26 @@ std::unique_ptr<Page> Page::deserialize(FsFile& file) {
       LOG_ERR(TAG, "Deserialization failed: Unknown tag %u", tag);
       return nullptr;
     }
+  }
+
+  uint16_t footnoteCount;
+  if (!serialization::readPodChecked(file, footnoteCount)) {
+    return nullptr;
+  }
+  if (footnoteCount > Page::MAX_FOOTNOTES_PER_PAGE) {
+    LOG_ERR(TAG, "Invalid footnote count: %u", footnoteCount);
+    return nullptr;
+  }
+  page->footnotes.resize(footnoteCount);
+  for (uint16_t i = 0; i < footnoteCount; i++) {
+    auto& fn = page->footnotes[i];
+    if (file.read(fn.number, sizeof(fn.number)) != sizeof(fn.number) ||
+        file.read(fn.href, sizeof(fn.href)) != sizeof(fn.href)) {
+      LOG_ERR(TAG, "Failed to read footnote %u", i);
+      return nullptr;
+    }
+    fn.number[sizeof(fn.number) - 1] = '\0';
+    fn.href[sizeof(fn.href) - 1] = '\0';
   }
 
   return page;

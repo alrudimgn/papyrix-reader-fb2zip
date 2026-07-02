@@ -5,6 +5,7 @@
 #include <RenderConfig.h>
 #include <ScriptDetector.h>
 #include <SdFat.h>
+#include <FootnoteEntry.h>
 #include <blocks/TextBlock.h>
 #include <expat.h>
 
@@ -12,6 +13,8 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <utility>
+#include <vector>
 
 class Page;
 class GfxRenderer;
@@ -69,6 +72,13 @@ class Fb2Parser : public ContentParser {
   // Anchor map for TOC navigation (section_N → page index)
   std::vector<std::pair<std::string, uint16_t>> anchorMap_;
 
+  bool insideFootnoteLink_ = false;
+  int footnoteLinkDepth_ = -1;
+  FootnoteEntry currentFootnote_ = {};
+  int currentFootnoteLinkTextLen_ = 0;
+  int wordsExtractedInBlock_ = 0;
+  std::vector<std::pair<int, FootnoteEntry>> pendingFootnotes_;
+
   // Callback state
   std::function<void(std::unique_ptr<Page>)> onPageComplete_;
   uint16_t maxPages_ = 0;
@@ -98,4 +108,5 @@ class Fb2Parser : public ContentParser {
   void startNewPage();
   EpdFontFamily::Style getCurrentFontFamily() const;
   void addVerticalSpacing(int lines);
+  static std::string extractAttr(const XML_Char** atts, const char* wantedName);
 };

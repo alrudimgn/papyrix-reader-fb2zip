@@ -68,8 +68,14 @@ void render(const GfxRenderer& r, const Theme& t, const CoverPageView& v) {
 void render(const GfxRenderer& r, const Theme& t, const ReaderMenuView& v) {
   if (!v.visible) return;
 
-  const char* items[] = {tr(CHAPTERS), tr(BOOKMARKS)};
-  ui::popupMenu(r, t, tr(MENU), items, ReaderMenuView::ITEM_COUNT, v.selected);
+  const char* items[ReaderMenuView::MAX_ITEM_COUNT] = {tr(CHAPTERS), tr(BOOKMARKS), ""};
+  int count = 2;
+  if (v.hasFootnotes) {
+    items[1] = tr(FOOTNOTES);
+    items[2] = tr(BOOKMARKS);
+    count = 3;
+  }
+  ui::popupMenu(r, t, tr(MENU), items, count, v.selected);
   r.displayBuffer();
 }
 

@@ -36,6 +36,7 @@ static constexpr const char* DEFAULTS[static_cast<int>(StrId::STR__COUNT)] = {
     "System Info",            // SYSTEM_INFO
     "Chapters",               // CHAPTERS
     "Bookmarks",              // BOOKMARKS
+    "Footnotes",              // FOOTNOTES
     "Join Network",           // JOIN_NETWORK
     "Create Hotspot",         // CREATE_HOTSPOT
     "WiFi Transfer",          // WIFI_TRANSFER
@@ -201,6 +202,8 @@ static constexpr const char* DEFAULTS[static_cast<int>(StrId::STR__COUNT)] = {
     "Papyrix",                // PAPYRIX
     "Add",                    // ADD
     "No bookmarks yet",       // NO_BOOKMARKS
+    "No footnotes on this page",  // NO_FOOTNOTES
+    "[link]",                 // LINK
     "Books",                  // BOOKS
     "Delete this file?",      // DELETE_FILE_Q
     "Delete this folder?",    // DELETE_FOLDER_Q

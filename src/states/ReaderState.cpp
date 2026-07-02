@@ -121,6 +121,34 @@ bool readMetricsIndexFile(const std::string& sectionsDir, const RenderConfig& co
   file.close();
   return true;
 }
+
+bool fileContainsAnchor(const std::string& path, const std::string& anchor) {
+  if (anchor.empty()) return false;
+
+  const std::string needle1 = "id=\"" + anchor + "\"";
+  const std::string needle2 = "id='" + anchor + "'";
+  FsFile file;
+  if (!SdMan.openFileForRead("FN", path, file)) return false;
+
+  char buf[512];
+  std::string window;
+  const size_t keep = std::max(needle1.size(), needle2.size()) + 8;
+  while (file.available() > 0) {
+    const size_t n = file.read(buf, sizeof(buf));
+    if (n == 0) break;
+    window.append(buf, n);
+    if (window.find(needle1) != std::string::npos || window.find(needle2) != std::string::npos) {
+      file.close();
+      return true;
+    }
+    if (window.size() > keep) {
+      window.erase(0, window.size() - keep);
+    }
+  }
+
+  file.close();
+  return false;
+}
 }  // namespace
 
 bool ReaderState::saveMetricsIndex(const std::string& sectionsDir, const RenderConfig& config) {
@@ -987,6 +1015,10 @@ StateTransition ReaderState::update(Core& core) {
       handleMenuInput(core, e);
       continue;
     }
+    if (footnoteMode_) {
+      handleFootnoteInput(core, e);
+      continue;
+    }
     if (bookmarkMode_) {
       handleBookmarkInput(core, e);
       continue;
@@ -1003,9 +1035,14 @@ StateTransition ReaderState::update(Core& core) {
             enterMenuMode(core);
             break;
           case Button::Back:
-            exitToUI(core);
-            // Won't reach here after restart
-            return StateTransition::stay(StateId::Reader);
+            if (footnoteDepth_ > 0) {
+              restoreFootnotePosition(core);
+            } else {
+              exitToUI(core);
+              // Won't reach here after restart
+              return StateTransition::stay(StateId::Reader);
+            }
+            break;
           case Button::Power:
             if (core.settings.shortPwrBtn == Settings::PowerPageTurn ||
                 core.settings.shortPwrBtn == Settings::PowerBookmark) {
@@ -1097,6 +1134,8 @@ void ReaderState::render(Core& core) {
     const Theme& theme = THEME_MANAGER.current();
     ui::render(renderer_, theme, menuView_);
     core.display.markDirty();
+  } else if (footnoteMode_) {
+    renderFootnoteOverlay(core);
   } else if (bookmarkMode_) {
     renderBookmarkOverlay(core);
   } else if (tocMode_) {
@@ -1512,6 +1551,7 @@ void ReaderState::renderCachedPage(Core& core) {
     needsRender_ = true;
     return;
   }
+  currentPageFootnotes_ = page->footnotes;
 
   const int fontId = core.settings.getReaderFontId(theme);
 
@@ -2844,7 +2884,7 @@ void ReaderState::exitToUI(Core& core) {
 
 void ReaderState::enterMenuMode(Core& core) {
   stopBackgroundCaching();
-  menuView_.show();
+  menuView_.show(!currentPageFootnotes_.empty());
   menuMode_ = true;
   needsRender_ = true;
   LOG_DBG(TAG, "Entered menu mode");
@@ -2882,6 +2922,7 @@ void ReaderState::handleMenuInput(Core& core, const Event& e) {
 }
 
 void ReaderState::handleMenuAction(Core& core, int action) {
+  const bool hasFootnotes = !currentPageFootnotes_.empty();
   exitMenuMode();
   switch (action) {
     case 0:  // Chapters
@@ -2897,10 +2938,195 @@ void ReaderState::handleMenuAction(Core& core, int action) {
         startBackgroundCaching(core);
       }
       break;
-    case 1:  // Bookmarks
-      enterBookmarkMode(core);
+    case 1:
+      if (hasFootnotes) {
+        enterFootnoteMode(core);
+      } else {
+        enterBookmarkMode(core);
+      }
+      break;
+    case 2:
+      if (hasFootnotes) {
+        enterBookmarkMode(core);
+      }
       break;
   }
+}
+
+// ============================================================================
+// Footnote Overlay Mode
+// ============================================================================
+
+void ReaderState::enterFootnoteMode(Core& core) {
+  stopBackgroundCaching();
+  footnoteView_.clear();
+  for (size_t i = 0; i < currentPageFootnotes_.size() && i < ui::BookmarkListView::MAX_ITEMS; i++) {
+    const char* label = currentPageFootnotes_[i].number[0] ? currentPageFootnotes_[i].number : tr(LINK);
+    footnoteView_.addItem(label, 0);
+  }
+  footnoteView_.buttons = ui::ButtonBar(tr(BACK), tr(GO), "", "");
+  footnoteMode_ = true;
+  needsRender_ = true;
+  LOG_DBG(TAG, "Entered footnote mode (%u footnotes)", static_cast<unsigned>(currentPageFootnotes_.size()));
+}
+
+void ReaderState::exitFootnoteMode() {
+  footnoteMode_ = false;
+  needsRender_ = true;
+  LOG_DBG(TAG, "Exited footnote mode");
+}
+
+void ReaderState::handleFootnoteInput(Core& core, const Event& e) {
+  if (e.type != EventType::ButtonPress && e.type != EventType::ButtonRepeat) return;
+
+  switch (e.button) {
+    case Button::Up:
+      footnoteView_.moveUp();
+      needsRender_ = true;
+      break;
+    case Button::Down:
+      footnoteView_.moveDown();
+      needsRender_ = true;
+      break;
+    case Button::Center:
+      if (!currentPageFootnotes_.empty()) {
+        jumpToFootnote(core, footnoteView_.selected);
+        exitFootnoteMode();
+        startBackgroundCaching(core);
+      }
+      break;
+    case Button::Back:
+      exitFootnoteMode();
+      startBackgroundCaching(core);
+      break;
+    default:
+      break;
+  }
+}
+
+void ReaderState::renderFootnoteOverlay(Core& core) {
+  const Theme& theme = THEME_MANAGER.current();
+  constexpr int startY = 60;
+  const int visibleCount = footnoteVisibleCount();
+
+  footnoteView_.ensureVisible(visibleCount);
+
+  renderer_.clearScreen(theme.backgroundColor);
+  renderer_.drawCenteredText(theme.uiFontId, 15, tr(FOOTNOTES), theme.primaryTextBlack, BOLD);
+
+  if (currentPageFootnotes_.empty()) {
+    const int y = renderer_.getScreenHeight() / 2 - renderer_.getLineHeight(theme.uiFontId) / 2;
+    renderer_.drawCenteredText(theme.uiFontId, y, tr(NO_FOOTNOTES), theme.primaryTextBlack, BOLD);
+  } else {
+    const int itemHeight = theme.itemHeight + theme.itemSpacing;
+    const int end = std::min(footnoteView_.scrollOffset + visibleCount, static_cast<int>(footnoteView_.itemCount));
+    for (int i = footnoteView_.scrollOffset; i < end; i++) {
+      const int y = startY + (i - footnoteView_.scrollOffset) * itemHeight;
+      ui::chapterItem(renderer_, theme, theme.uiFontId, y, footnoteView_.items[i].title, footnoteView_.items[i].depth,
+                      i == footnoteView_.selected, false);
+    }
+  }
+
+  ui::buttonBar(renderer_, theme, footnoteView_.buttons);
+  renderer_.displayBuffer();
+  core.display.markDirty();
+}
+
+void ReaderState::jumpToFootnote(Core& core, int index) {
+  if (index < 0 || index >= static_cast<int>(currentPageFootnotes_.size())) return;
+
+  std::string href = currentPageFootnotes_[index].href;
+  if (href.empty()) return;
+
+  std::string anchor;
+  const size_t hashPos = href.find('#');
+  if (hashPos != std::string::npos) {
+    anchor = href.substr(hashPos + 1);
+  } else {
+    anchor = href;
+  }
+  if (anchor.empty()) return;
+
+  auto* fb2Provider = core.content.asFb2();
+  if (!fb2Provider || !fb2Provider->getFb2()) return;
+
+  if (footnoteDepth_ < MAX_FOOTNOTE_DEPTH) {
+    savedFootnotePositions_[footnoteDepth_] = {currentSpineIndex_, currentSectionPage_};
+    footnoteDepth_++;
+  }
+
+  auto resolveInSection = [&](int sectionIndex) -> int {
+    currentSpineIndex_ = sectionIndex;
+    currentSectionPage_ = 0;
+    parser_.reset();
+    parserSpineIndex_ = -1;
+    pageCache_.reset();
+
+    const std::string cachePath = fb2Provider->getSectionCachePath(sectionIndex);
+    createOrExtendCache(core);
+    int page = loadAnchorPage(cachePath, anchor);
+    while (page < 0 && pageCache_ && pageCache_->isPartial()) {
+      const size_t pagesBefore = pageCache_->pageCount();
+      createOrExtendCache(core);
+      if (!pageCache_ || pageCache_->pageCount() <= pagesBefore) break;
+      page = loadAnchorPage(cachePath, anchor);
+    }
+    return page;
+  };
+
+  int targetSection = currentSpineIndex_;
+  int targetPage = loadAnchorPage(fb2Provider->getSectionCachePath(currentSpineIndex_), anchor);
+  if (targetPage < 0) {
+    targetPage = resolveInSection(currentSpineIndex_);
+  }
+
+  if (targetPage < 0) {
+    const int sectionCount = fb2Provider->getSectionCount();
+    for (int i = 0; i < sectionCount; i++) {
+      if (i == currentSpineIndex_) continue;
+      if (!fileContainsAnchor(fb2Provider->getSectionPath(i), anchor)) continue;
+      targetSection = i;
+      targetPage = resolveInSection(i);
+      break;
+    }
+  }
+
+  if (targetPage >= 0) {
+    currentSpineIndex_ = targetSection;
+    currentSectionPage_ = targetPage;
+    parser_.reset();
+    parserSpineIndex_ = -1;
+    pageCache_.reset();
+    needsRender_ = true;
+    LOG_DBG(TAG, "Jumped to footnote anchor '%s' section=%d page=%d", anchor.c_str(), targetSection, targetPage);
+  } else {
+    if (footnoteDepth_ > 0) footnoteDepth_--;
+    LOG_DBG(TAG, "Footnote anchor not found: %s", anchor.c_str());
+  }
+}
+
+void ReaderState::restoreFootnotePosition(Core& core) {
+  if (footnoteDepth_ <= 0) return;
+
+  stopBackgroundCaching();
+  footnoteDepth_--;
+  const auto& pos = savedFootnotePositions_[footnoteDepth_];
+  currentSpineIndex_ = pos.spineIndex;
+  currentSectionPage_ = pos.sectionPage;
+  parser_.reset();
+  parserSpineIndex_ = -1;
+  pageCache_.reset();
+  needsRender_ = true;
+  startBackgroundCaching(core);
+  LOG_DBG(TAG, "Restored footnote position section=%d page=%d", currentSpineIndex_, currentSectionPage_);
+}
+
+int ReaderState::footnoteVisibleCount() const {
+  constexpr int startY = 60;
+  constexpr int bottomMargin = 70;
+  const Theme& theme = THEME_MANAGER.current();
+  const int itemHeight = theme.itemHeight + theme.itemSpacing;
+  return (renderer_.getScreenHeight() - startY - bottomMargin) / itemHeight;
 }
 
 // ============================================================================

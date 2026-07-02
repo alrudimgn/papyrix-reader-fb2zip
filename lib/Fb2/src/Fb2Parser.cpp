@@ -23,6 +23,7 @@
 
 namespace {
 constexpr size_t READ_CHUNK_SIZE = 4096;
+constexpr size_t MAX_ANCHORS_PER_SECTION = 512;
 
 bool isWhitespace(char c) { return c == ' ' || c == '\r' || c == '\n' || c == '\t'; }
 
@@ -42,6 +43,10 @@ bool matches(const char* tag, const char* tags[], int count) {
     if (strcmp(tag, tags[i]) == 0) return true;
   }
   return false;
+}
+
+bool isFootnoteNumberChar(char c) {
+  return !isWhitespace(c) && c != '[' && c != ']' && c != '(' && c != ')';
 }
 }  // namespace
 
@@ -92,6 +97,12 @@ void Fb2Parser::reset() {
   fileSize_ = 0;
   bytesConsumed_ = 0;
   anchorMap_.clear();
+  insideFootnoteLink_ = false;
+  footnoteLinkDepth_ = -1;
+  currentFootnote_ = FootnoteEntry();
+  currentFootnoteLinkTextLen_ = 0;
+  wordsExtractedInBlock_ = 0;
+  pendingFootnotes_.clear();
 }
 
 bool Fb2Parser::parsePages(const std::function<void(std::unique_ptr<Page>)>& onPageComplete, uint16_t maxPages,
@@ -277,6 +288,11 @@ void XMLCALL Fb2Parser::startElement(void* userData, const XML_Char* name, const
     return;
   }
 
+  const std::string elementId = extractAttr(atts, "id");
+  if (!elementId.empty() && self->anchorMap_.size() < MAX_ANCHORS_PER_SECTION) {
+    self->anchorMap_.emplace_back(elementId, self->pagesCreated_);
+  }
+
   if (strcmp(localName, "section") == 0) {
     self->sectionCounter_++;
     if (!self->firstSection_) {
@@ -326,6 +342,17 @@ void XMLCALL Fb2Parser::startElement(void* userData, const XML_Char* name, const
                                          : static_cast<TextBlock::BLOCK_STYLE>(self->config_.paragraphAlignment);
       self->startNewTextBlock(style);
     }
+  } else if (strcmp(localName, "a") == 0) {
+    const std::string href = extractAttr(atts, "href");
+    if (!href.empty() && href[0] == '#') {
+      self->flushPartWordBuffer();
+      self->insideFootnoteLink_ = true;
+      self->footnoteLinkDepth_ = self->depth_ + 1;
+      strncpy(self->currentFootnote_.href, href.c_str(), sizeof(self->currentFootnote_.href) - 1);
+      self->currentFootnote_.href[sizeof(self->currentFootnote_.href) - 1] = '\0';
+      self->currentFootnote_.number[0] = '\0';
+      self->currentFootnoteLinkTextLen_ = 0;
+    }
   } else if (strcmp(localName, "emphasis") == 0) {
     self->flushPartWordBuffer();
     self->italicUntilDepth_ = std::min(self->italicUntilDepth_, self->depth_);
@@ -362,6 +389,19 @@ void XMLCALL Fb2Parser::startElement(void* userData, const XML_Char* name, const
 void XMLCALL Fb2Parser::endElement(void* userData, const XML_Char* name) {
   auto* self = static_cast<Fb2Parser*>(userData);
   const char* localName = stripNamespace(name);
+
+  if (strcmp(localName, "a") == 0 && self->insideFootnoteLink_ && self->depth_ == self->footnoteLinkDepth_) {
+    self->flushPartWordBuffer();
+    if (self->currentFootnote_.number[0] != '\0' && self->currentFootnote_.href[0] != '\0') {
+      const int wordIndex =
+          self->wordsExtractedInBlock_ + (self->currentTextBlock_ ? static_cast<int>(self->currentTextBlock_->size()) : 0);
+      self->pendingFootnotes_.push_back({wordIndex, self->currentFootnote_});
+    }
+    self->insideFootnoteLink_ = false;
+    self->footnoteLinkDepth_ = -1;
+    self->currentFootnote_ = FootnoteEntry();
+    self->currentFootnoteLinkTextLen_ = 0;
+  }
 
   if (strcmp(localName, "emphasis") == 0 || strcmp(localName, "code") == 0 || strcmp(localName, "strong") == 0) {
     self->flushPartWordBuffer();
@@ -447,6 +487,14 @@ void XMLCALL Fb2Parser::characterData(void* userData, const XML_Char* s, int len
     }
 
     self->partWordBuffer_[self->partWordBufferIndex_++] = s[i];
+
+    if (self->insideFootnoteLink_ && self->currentFootnoteLinkTextLen_ < FOOTNOTE_NUMBER_LEN - 1) {
+      const char c = s[i];
+      if (isFootnoteNumberChar(c)) {
+        self->currentFootnote_.number[self->currentFootnoteLinkTextLen_++] = c;
+        self->currentFootnote_.number[self->currentFootnoteLinkTextLen_] = '\0';
+      }
+    }
   }
 }
 
@@ -488,6 +536,7 @@ void Fb2Parser::makePages() {
   if (!currentPage_) {
     startNewPage();
   }
+  wordsExtractedInBlock_ = 0;
 
   const int lineHeight = static_cast<int>(renderer_.getLineHeight(config_.fontId) * config_.lineCompression);
   bool continueProcessing = true;
@@ -502,6 +551,13 @@ void Fb2Parser::makePages() {
         }
       },
       true, [this, &continueProcessing]() -> bool { return !continueProcessing || (shouldAbort_ && shouldAbort_()); });
+
+  if (!pendingFootnotes_.empty() && currentPage_) {
+    for (const auto& entry : pendingFootnotes_) {
+      currentPage_->addFootnote(entry.second.number, entry.second.href);
+    }
+    pendingFootnotes_.clear();
+  }
 
   if (!hitMaxPages_) {
     switch (config_.spacingLevel) {
@@ -544,6 +600,14 @@ void Fb2Parser::addLineToPage(std::shared_ptr<TextBlock> line) {
     }
   }
 
+  wordsExtractedInBlock_ += static_cast<int>(line->getWords().size());
+  auto footnoteIt = pendingFootnotes_.begin();
+  while (footnoteIt != pendingFootnotes_.end() && footnoteIt->first <= wordsExtractedInBlock_) {
+    currentPage_->addFootnote(footnoteIt->second.number, footnoteIt->second.href);
+    ++footnoteIt;
+  }
+  pendingFootnotes_.erase(pendingFootnotes_.begin(), footnoteIt);
+
   currentPage_->elements.push_back(std::make_shared<PageLine>(line, 0, currentPageNextY_));
   currentPageNextY_ += lineHeight;
 }
@@ -565,4 +629,17 @@ EpdFontFamily::Style Fb2Parser::getCurrentFontFamily() const {
 void Fb2Parser::addVerticalSpacing(int lines) {
   const int lineHeight = static_cast<int>(renderer_.getLineHeight(config_.fontId) * config_.lineCompression);
   currentPageNextY_ += lineHeight * lines;
+}
+
+std::string Fb2Parser::extractAttr(const XML_Char** atts, const char* wantedName) {
+  if (!atts || !wantedName) {
+    return "";
+  }
+  for (int i = 0; atts[i]; i += 2) {
+    const char* attrName = stripNamespace(atts[i]);
+    if (strcmp(attrName, wantedName) == 0 && atts[i + 1]) {
+      return atts[i + 1];
+    }
+  }
+  return "";
 }

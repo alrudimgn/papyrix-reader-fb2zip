@@ -83,14 +83,18 @@ void render(const GfxRenderer& r, const Theme& t, const CoverPageView& v);
 // ============================================================================
 
 struct ReaderMenuView {
-  static constexpr int ITEM_COUNT = 2;
+  static constexpr int MAX_ITEM_COUNT = 3;
 
   int8_t selected = 0;
+  bool hasFootnotes = false;
   bool visible = false;
   bool needsRender = true;
 
-  void show() {
+  int8_t itemCount() const { return static_cast<int8_t>(hasFootnotes ? MAX_ITEM_COUNT : 2); }
+
+  void show(bool footnotesAvailable = false) {
     visible = true;
+    hasFootnotes = footnotesAvailable;
     selected = 0;
     needsRender = true;
   }
@@ -108,7 +112,7 @@ struct ReaderMenuView {
   }
 
   void moveDown() {
-    if (selected < ITEM_COUNT - 1) {
+    if (selected < itemCount() - 1) {
       selected++;
       needsRender = true;
     }

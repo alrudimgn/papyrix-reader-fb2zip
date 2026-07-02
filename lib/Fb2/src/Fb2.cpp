@@ -22,11 +22,11 @@
 #include <functional>
 
 namespace {
-constexpr uint8_t kMetaCacheVersion = 6;
+constexpr uint8_t kMetaCacheVersion = 7;
 constexpr char kMetaCacheFile[] = "/meta.bin";
 constexpr char kSectionFilePrefix[] = "/section_";
 constexpr char kSectionFileSuffix[] = ".fb2";
-constexpr char kSectionCacheMarker[] = "/.section_cache_v2";
+constexpr char kSectionCacheMarker[] = "/.section_cache_v3";
 
 void writeLe16(Print& out, const uint16_t value) {
   out.write(value & 0xFF);
@@ -603,7 +603,7 @@ bool Fb2::scanSectionOffsets() {
     }
     if (strcmp(tag, "body") == 0) {
       c->bodyCount++;
-      c->inBody = (c->bodyCount == 1);
+      c->inBody = true;
       return;
     }
     if (strcmp(tag, "section") == 0 && c->inBody) {

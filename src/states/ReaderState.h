@@ -1,9 +1,11 @@
 #pragma once
 
 #include <BackgroundTask.h>
+#include <FootnoteEntry.h>
 
 #include <cstdint>
 #include <memory>
+#include <string>
 #include <vector>
 
 #include "../content/BookmarkManager.h"
@@ -224,6 +226,25 @@ class ReaderState : public State {
   void saveBookmarks(Core& core);
   void populateBookmarkView();
   int bookmarkVisibleCount() const;
+
+  // Footnote overlay/navigation mode
+  std::vector<FootnoteEntry> currentPageFootnotes_;
+  bool footnoteMode_ = false;
+  ui::BookmarkListView footnoteView_;
+  struct SavedFootnotePosition {
+    int spineIndex = 0;
+    int sectionPage = 0;
+  };
+  static constexpr int MAX_FOOTNOTE_DEPTH = 3;
+  SavedFootnotePosition savedFootnotePositions_[MAX_FOOTNOTE_DEPTH];
+  int footnoteDepth_ = 0;
+  void enterFootnoteMode(Core& core);
+  void exitFootnoteMode();
+  void handleFootnoteInput(Core& core, const Event& e);
+  void renderFootnoteOverlay(Core& core);
+  void jumpToFootnote(Core& core, int index);
+  void restoreFootnotePosition(Core& core);
+  int footnoteVisibleCount() const;
 
   // Boot mode transition - exit to UI via restart
   void exitToUI(Core& core);
