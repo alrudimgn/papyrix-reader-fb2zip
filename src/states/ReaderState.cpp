@@ -1045,7 +1045,8 @@ StateTransition ReaderState::update(Core& core) {
             break;
           case Button::Power:
             if (core.settings.shortPwrBtn == Settings::PowerPageTurn ||
-                core.settings.shortPwrBtn == Settings::PowerBookmark) {
+                core.settings.shortPwrBtn == Settings::PowerBookmark ||
+                core.settings.shortPwrBtn == Settings::PowerFootnotes) {
               powerPressStartedMs_ = millis();
             }
             break;
@@ -1097,6 +1098,8 @@ StateTransition ReaderState::update(Core& core) {
                       showBookmarkNotification(core);
                       needsRender_ = false;
                     }
+                  } else if (core.settings.shortPwrBtn == Settings::PowerFootnotes && !currentPageFootnotes_.empty()) {
+                    enterFootnoteMode(core);
                   }
                 }
               }

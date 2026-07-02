@@ -54,7 +54,13 @@ struct Settings {
   enum LineSpacing : uint8_t { SpacingCompact = 0, SpacingNormal = 1, SpacingRelaxed = 2, SpacingLarge = 3 };
 
   // Short power button press actions
-  enum PowerButtonAction : uint8_t { PowerIgnore = 0, PowerSleep = 1, PowerPageTurn = 2, PowerBookmark = 3 };
+  enum PowerButtonAction : uint8_t {
+    PowerIgnore = 0,
+    PowerSleep = 1,
+    PowerPageTurn = 2,
+    PowerBookmark = 3,
+    PowerFootnotes = 4
+  };
 
   // Startup behavior
   enum StartupBehavior : uint8_t { StartupLastDocument = 0, StartupHome = 1 };

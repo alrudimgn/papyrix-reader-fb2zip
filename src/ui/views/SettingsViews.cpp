@@ -58,7 +58,7 @@ void DeviceSettingsView::initDefs() {
   static const char* sleepTimeoutValues[5];
   static const char* sleepScreenValues[4];
   static const char* startupValues[2];
-  static const char* shortPwrValues[4];
+  static const char* shortPwrValues[5];
   static const char* pagesRefreshValues[6];
   static const char* toggleValues[2];
   static const char* frontButtonValues[2];
@@ -79,6 +79,7 @@ void DeviceSettingsView::initDefs() {
   shortPwrValues[1] = tr(SLEEP_VAL);
   shortPwrValues[2] = tr(PAGE_TURN);
   shortPwrValues[3] = tr(BOOKMARK_VAL);
+  shortPwrValues[4] = tr(FOOTNOTES);
   pagesRefreshValues[0] = "1";
   pagesRefreshValues[1] = "5";
   pagesRefreshValues[2] = "10";
@@ -95,7 +96,7 @@ void DeviceSettingsView::initDefs() {
   DEFS[0] = {tr(AUTO_SLEEP_TIMEOUT), sleepTimeoutValues, 5};
   DEFS[1] = {tr(SLEEP_SCREEN), sleepScreenValues, 4};
   DEFS[2] = {tr(STARTUP_BEHAVIOR), startupValues, 2};
-  DEFS[3] = {tr(SHORT_POWER_BUTTON), shortPwrValues, 4};
+  DEFS[3] = {tr(SHORT_POWER_BUTTON), shortPwrValues, 5};
   DEFS[4] = {tr(PAGES_PER_REFRESH), pagesRefreshValues, 6};
   DEFS[5] = {tr(SUNLIGHT_FADING_FIX), toggleValues, 2};
   DEFS[6] = {tr(FRONT_BUTTONS), frontButtonValues, 2};
