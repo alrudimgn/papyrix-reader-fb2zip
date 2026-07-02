@@ -65,6 +65,9 @@ struct Settings {
   // Startup behavior
   enum StartupBehavior : uint8_t { StartupLastDocument = 0, StartupHome = 1 };
 
+  // UI language
+  enum UiLanguage : uint8_t { LanguageEnglish = 0, LanguageRussian = 1 };
+
   // Settings fields (same order as CrossPointSettings for binary compatibility)
   uint8_t sleepScreen = SleepDark;
   uint8_t statusBar = StatusShow;
@@ -92,6 +95,7 @@ struct Settings {
   uint16_t fileListSelectedIndex = 0;   // FileListState: last selected index
   uint8_t frontButtonLayout = FrontBCLR;
   uint8_t fullBookProcess = 0;
+  uint8_t uiLanguage = LanguageEnglish;
 
   // Persistence (using drivers::Storage wrapper)
   Result<void> load(drivers::Storage& storage);

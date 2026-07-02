@@ -240,6 +240,7 @@ class I18n {
   const char* get(StrId id) const { return strings_[static_cast<uint8_t>(id)]; }
 
   bool setOverride(const char* keyName, const char* value);
+  void setLanguage(uint8_t language);
   void resetToDefaults();
 
   int bufferUsed() const { return bufferUsed_; }
@@ -250,6 +251,7 @@ class I18n {
   const char* strings_[static_cast<int>(StrId::STR__COUNT)];
   char buffer_[BUFFER_SIZE];
   int bufferUsed_ = 0;
+  uint8_t language_ = 0;
 };
 
 #define tr(id) I18n::instance().get(StrId::STR_##id)

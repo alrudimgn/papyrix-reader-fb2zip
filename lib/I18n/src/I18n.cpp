@@ -3,6 +3,7 @@
 #include <cstring>
 
 #include "I18nDefaults.h"
+#include "I18nRussian.h"
 
 namespace {
 
@@ -228,6 +229,16 @@ void I18n::resetToDefaults() {
     strings_[i] = i18n::DEFAULTS[i];
   }
   bufferUsed_ = 0;
+  language_ = 0;
+}
+
+void I18n::setLanguage(uint8_t language) {
+  const char* const* source = (language == 1) ? i18n::RUSSIAN : i18n::DEFAULTS;
+  for (int i = 0; i < static_cast<int>(StrId::STR__COUNT); i++) {
+    strings_[i] = source[i];
+  }
+  bufferUsed_ = 0;
+  language_ = (language == 1) ? 1 : 0;
 }
 
 bool I18n::setOverride(const char* keyName, const char* value) {

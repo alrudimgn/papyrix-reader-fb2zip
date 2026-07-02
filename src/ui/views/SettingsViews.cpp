@@ -63,6 +63,7 @@ void DeviceSettingsView::initDefs() {
   static const char* toggleValues[2];
   static const char* frontButtonValues[2];
   static const char* sideButtonValues[2];
+  static const char* languageValues[2];
 
   sleepTimeoutValues[0] = tr(MIN_5);
   sleepTimeoutValues[1] = tr(MIN_10);
@@ -92,6 +93,8 @@ void DeviceSettingsView::initDefs() {
   frontButtonValues[1] = tr(FRONT_LRBC);
   sideButtonValues[0] = tr(PREV_NEXT);
   sideButtonValues[1] = tr(NEXT_PREV);
+  languageValues[0] = "English";
+  languageValues[1] = "Русский";
 
   DEFS[0] = {tr(AUTO_SLEEP_TIMEOUT), sleepTimeoutValues, 5};
   DEFS[1] = {tr(SLEEP_SCREEN), sleepScreenValues, 4};
@@ -101,6 +104,7 @@ void DeviceSettingsView::initDefs() {
   DEFS[5] = {tr(SUNLIGHT_FADING_FIX), toggleValues, 2};
   DEFS[6] = {tr(FRONT_BUTTONS), frontButtonValues, 2};
   DEFS[7] = {tr(SIDE_BUTTONS), sideButtonValues, 2};
+  DEFS[8] = {tr(LANGUAGE), languageValues, 2};
 }
 
 // Render functions

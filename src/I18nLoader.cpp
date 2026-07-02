@@ -15,7 +15,9 @@ static constexpr const char* LOCALE_FILE = PAPYRIX_DIR "/locale.txt";
 
 namespace i18n {
 
-void loadLocaleFromSD() {
+void loadLocaleFromSD(uint8_t language) {
+  I18n::instance().setLanguage(language);
+
   if (!SdMan.exists(LOCALE_FILE)) return;
 
   int count = 0;
@@ -28,5 +30,7 @@ void loadLocaleFromSD() {
 
   LOG_INF(TAG, "Loaded locale: %d strings, %d/%d bytes", count, I18n::instance().bufferUsed(), I18n::BUFFER_SIZE);
 }
+
+void loadLocaleFromSD() { loadLocaleFromSD(0); }
 
 }  // namespace i18n

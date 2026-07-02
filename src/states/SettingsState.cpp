@@ -10,6 +10,7 @@
 #include <algorithm>
 
 #include "../Battery.h"
+#include "../I18nLoader.h"
 #include "../core/FirmwareUpdater.h"
 
 #define TAG "SETTINGS_UI"
@@ -654,10 +655,14 @@ void SettingsState::loadDeviceSettings() {
 
   // Index 7: Side Buttons (Prev/Next=0, Next/Prev=1)
   deviceView_.values[7] = settings.sideButtonLayout;
+
+  // Index 8: Language (English=0, Russian=1)
+  deviceView_.values[8] = settings.uiLanguage;
 }
 
 void SettingsState::saveDeviceSettings() {
   auto& settings = core_->settings;
+  const uint8_t previousLanguage = settings.uiLanguage;
 
   // Index 0: Auto Sleep Timeout
   settings.autoSleepMinutes = deviceView_.values[0];
@@ -683,6 +688,19 @@ void SettingsState::saveDeviceSettings() {
 
   // Index 7: Side Buttons - deferred to goBack() on screen exit.
   // Same as front buttons: changing layout mid-navigation causes ghost events.
+
+  // Index 8: Language
+  settings.uiLanguage = std::min(deviceView_.values[8], uint8_t(Settings::LanguageRussian));
+  if (settings.uiLanguage != previousLanguage) {
+    i18n::loadLocaleFromSD(settings.uiLanguage);
+    ui::ReaderSettingsView::initDefs();
+    ui::DeviceSettingsView::initDefs();
+    menuView_.needsRender = true;
+    readerView_.needsRender = true;
+    deviceView_.needsRender = true;
+    cleanupView_.needsRender = true;
+    infoView_.needsRender = true;
+  }
 }
 
 void SettingsState::populateSystemInfo() {

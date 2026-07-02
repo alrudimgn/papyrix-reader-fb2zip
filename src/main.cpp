@@ -396,7 +396,7 @@ bool earlyInit() {
   // Load settings before wakeup verification - without this, a full power cycle
   // (no USB) resets RTC memory and the short power button setting is ignored
   papyrix::core.settings.loadFromFile();
-  i18n::loadLocaleFromSD();
+  i18n::loadLocaleFromSD(papyrix::core.settings.uiLanguage);
   rtcPowerButtonDurationMs = papyrix::core.settings.getPowerButtonDuration();
 
   if (wakeup.isPowerButton) {
