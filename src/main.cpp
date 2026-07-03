@@ -175,59 +175,16 @@ WakeupInfo getWakeupInfo() {
   return {resetReason, isPowerButton, usbColdBoot};
 }
 
-// Verify long press on wake-up from deep sleep
-void verifyWakeupLongPress(esp_reset_reason_t resetReason) {
+// Wake from deep sleep is always accepted once the power button has brought the
+// device up. Short-power reader actions (page turn/bookmark/footnotes) should
+// not make the user hold Power again just to wake the device.
+void acceptPowerButtonWake(esp_reset_reason_t resetReason) {
   if (resetReason == ESP_RST_SW) {
     LOG_DBG(TAG, "Skipping wakeup verification (software restart)");
     return;
   }
 
-  // Fast path for short press mode - skip verification entirely.
-  // Uses settings directly (not RTC variable) so it works even after a full power cycle
-  // where RTC memory is lost. Needed because inputManager.isPressed() may take up to
-  // ~500ms to return the correct state after wake-up.
-  if (papyrix::core.settings.shortPwrBtn == papyrix::Settings::PowerSleep) {
-    LOG_DBG(TAG, "Skipping wakeup verification (short press mode)");
-    return;
-  }
-
-  // Give the user up to 1000ms to start holding the power button, and must hold for the configured duration.
-  const auto start = millis();
-  bool abort = false;
-  const uint16_t requiredPressDuration = papyrix::core.settings.getPowerButtonDuration();
-
-  // Subtract the boot time already elapsed from the hold-time requirement: assume the user
-  // pressed the power button at millis()==0 (device-on event) and has held it through boot.
-  // Without this, the X3 takes longer to reach this point (Device probe, heavier display init)
-  // than the X4, so the user perceives a much longer required hold.
-  // Idea ported from crosspoint-reader src/main.cpp::verifyPowerButtonDuration.
-  const uint16_t calibratedPressDuration =
-      (start < requiredPressDuration) ? static_cast<uint16_t>(requiredPressDuration - start) : 1;
-
-  inputManager.update();
-  // Verify the user has actually pressed
-  while (!inputManager.isPressed(InputManager::BTN_POWER) && millis() - start < 1000) {
-    delay(10);  // only wait 10ms each iteration to not delay too much in case of short configured duration.
-    inputManager.update();
-  }
-
-  if (inputManager.isPressed(InputManager::BTN_POWER)) {
-    do {
-      delay(10);
-      inputManager.update();
-    } while (inputManager.isPressed(InputManager::BTN_POWER) && inputManager.getHeldTime() < calibratedPressDuration);
-    abort = inputManager.getHeldTime() < calibratedPressDuration;
-  } else {
-    abort = true;
-  }
-
-  if (abort) {
-    // Button released too early. Returning to sleep.
-    // IMPORTANT: Re-arm the wakeup trigger before sleeping again
-    esp_deep_sleep_enable_gpio_wakeup(1ULL << InputManager::POWER_BUTTON_PIN, ESP_GPIO_WAKEUP_GPIO_LOW);
-    disableGpioPullsForSleep();
-    esp_deep_sleep_start();
-  }
+  LOG_DBG(TAG, "Accepting power-button wake");
 }
 
 void waitForPowerRelease() {
@@ -400,7 +357,7 @@ bool earlyInit() {
   rtcPowerButtonDurationMs = papyrix::core.settings.getPowerButtonDuration();
 
   if (wakeup.isPowerButton) {
-    verifyWakeupLongPress(wakeup.resetReason);
+    acceptPowerButtonWake(wakeup.resetReason);
   }
 
   LOG_INF(TAG, "Starting Papyrix version " PAPYRIX_VERSION);
