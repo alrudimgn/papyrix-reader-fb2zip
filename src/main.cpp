@@ -293,6 +293,16 @@ void showErrorScreen(const char* message) {
 // Track current boot mode for loop behavior
 static papyrix::BootMode currentBootMode = papyrix::BootMode::UI;
 
+void prepareGpiosForDeepSleep() {
+  constexpr gpio_num_t GPIO_SPIWP = GPIO_NUM_13;
+  gpio_set_direction(GPIO_SPIWP, GPIO_MODE_OUTPUT);
+  gpio_set_level(GPIO_SPIWP, 0);
+  esp_sleep_config_gpio_isolate();
+  gpio_deep_sleep_hold_en();
+  gpio_hold_en(GPIO_SPIWP);
+  pinMode(InputManager::POWER_BUTTON_PIN, INPUT_PULLUP);
+}
+
 // Early initialization - common to both boot modes
 // Returns false if critical initialization failed
 bool earlyInit() {
@@ -310,8 +320,8 @@ bool earlyInit() {
   // on a powered-off device returns to sleep without a multi-second wake-up.
   const auto wakeup = getWakeupInfo();
   if (wakeup.usbColdBoot) {
+    prepareGpiosForDeepSleep();
     esp_deep_sleep_enable_gpio_wakeup(1ULL << InputManager::POWER_BUTTON_PIN, ESP_GPIO_WAKEUP_GPIO_LOW);
-    disableGpioPullsForSleep();
     esp_deep_sleep_start();
   }
 

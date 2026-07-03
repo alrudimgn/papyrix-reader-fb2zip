@@ -38,6 +38,23 @@ extern uint16_t rtcPowerButtonDurationMs;
 
 namespace papyrix {
 
+namespace {
+
+void prepareGpiosForDeepSleep() {
+  // Power latch sequence, matching cpr-vcodex-fork/HalPowerManager.
+  // GPIO13 is connected to the battery latch MOSFET and must be held LOW
+  // through deep sleep so a later Power press starts a clean wake.
+  constexpr gpio_num_t GPIO_SPIWP = GPIO_NUM_13;
+  gpio_set_direction(GPIO_SPIWP, GPIO_MODE_OUTPUT);
+  gpio_set_level(GPIO_SPIWP, 0);
+  esp_sleep_config_gpio_isolate();
+  gpio_deep_sleep_hold_en();
+  gpio_hold_en(GPIO_SPIWP);
+  pinMode(InputManager::POWER_BUTTON_PIN, INPUT_PULLUP);
+}
+
+}  // namespace
+
 SleepState::SleepState(GfxRenderer& renderer) : renderer_(renderer) {}
 
 void SleepState::enter(Core& core) {
@@ -80,13 +97,13 @@ void SleepState::enter(Core& core) {
   LittleFS.end();
   SPI.end();
 
-  // Configure wake-up source (power button)
-  esp_deep_sleep_enable_gpio_wakeup(1ULL << InputManager::POWER_BUTTON_PIN, ESP_GPIO_WAKEUP_GPIO_LOW);
-
   // Wait for power button release before entering deep sleep
   waitForPowerRelease();
 
-  disableGpioPullsForSleep();
+  prepareGpiosForDeepSleep();
+
+  // Configure wake-up source (power button) after the button is released.
+  esp_deep_sleep_enable_gpio_wakeup(1ULL << InputManager::POWER_BUTTON_PIN, ESP_GPIO_WAKEUP_GPIO_LOW);
 
   LOG_INF(TAG, "Entering deep sleep");
 
