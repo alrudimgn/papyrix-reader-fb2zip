@@ -28,6 +28,7 @@
 #include "../config.h"
 #include "../content/Fb2Provider.h"
 #include "../core/Core.h"
+#include "../core/PowerDebug.h"
 #include "../drivers/Device.h"
 #include "../images/PapyrixLogo.h"
 
@@ -42,6 +43,12 @@ SleepState::SleepState(GfxRenderer& renderer) : renderer_(renderer) {}
 
 void SleepState::enter(Core& core) {
   LOG_INF(TAG, "SleepState::enter - rendering sleep screen");
+  powerdebug::markRtcEvent("sleep.enter");
+  powerdebug::logf("sleep.enter", "sleep_screen=%u short_power=%u duration=%u last_book=%s",
+                   static_cast<unsigned>(core.settings.sleepScreen), static_cast<unsigned>(core.settings.shortPwrBtn),
+                   static_cast<unsigned>(core.settings.getPowerButtonDuration()), core.settings.lastBookPath);
+  powerdebug::logSettingsSnapshot("sleep.enter", core.settings);
+  powerdebug::logInputSnapshot("sleep.enter");
 
   // Black-then-white clearing sequence to fully erase previous screen content
   // (prevents ghost artifacts like "Indexing" text or book content on sleep screen)
@@ -63,32 +70,46 @@ void SleepState::enter(Core& core) {
       renderDefaultSleepScreen(core);
       break;
   }
+  powerdebug::logEvent("sleep.screen_rendered");
+  powerdebug::logInputSnapshot("sleep.after_screen_rendered");
 
   // Save power button duration to RTC memory for wake-up verification
   rtcPowerButtonDurationMs = core.settings.getPowerButtonDuration();
+  powerdebug::logf("sleep.rtc_duration_saved", "rtc_duration=%u", static_cast<unsigned>(rtcPowerButtonDurationMs));
 
   // Put display into low-power mode after rendering
   core.display.sleep();
+  powerdebug::logEvent("sleep.display_sleep_done");
 
   // Shutdown network if it was used
   if (core.network.isInitialized()) {
+    powerdebug::logEvent("sleep.network_shutdown_start");
     core.network.shutdown();
+    powerdebug::logEvent("sleep.network_shutdown_done");
   }
-
-  // Power down peripherals before deep sleep to minimize current draw
-  SdMan.end();
-  LittleFS.end();
-  SPI.end();
 
   // Configure wake-up source (power button)
   esp_deep_sleep_enable_gpio_wakeup(1ULL << InputManager::POWER_BUTTON_PIN, ESP_GPIO_WAKEUP_GPIO_LOW);
+  powerdebug::logEvent("sleep.wakeup_gpio_enabled");
 
   // Wait for power button release before entering deep sleep
+  powerdebug::logEvent("sleep.wait_power_release_start");
   waitForPowerRelease();
+  powerdebug::logEvent("sleep.wait_power_release_done");
+  powerdebug::logInputSnapshot("sleep.after_power_release");
 
   disableGpioPullsForSleep();
+  powerdebug::logEvent("sleep.gpio_pulls_disabled");
+  powerdebug::logInputSnapshot("sleep.after_gpio_pulls_disabled");
 
   LOG_INF(TAG, "Entering deep sleep");
+  powerdebug::markRtcEvent("sleep.deep_sleep_start");
+  powerdebug::logEvent("sleep.deep_sleep_start");
+
+  // Power down peripherals as late as possible so debug logs are flushed first.
+  SdMan.end();
+  LittleFS.end();
+  SPI.end();
 
   // Enter deep sleep - this never returns
   esp_deep_sleep_start();

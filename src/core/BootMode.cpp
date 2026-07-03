@@ -8,6 +8,7 @@
 #include "../ThemeManager.h"
 #include "Core.h"
 #include "PapyrixSettings.h"
+#include "PowerDebug.h"
 
 // Access global renderer from main.cpp
 extern GfxRenderer renderer;
@@ -29,6 +30,7 @@ BootMode detectBootMode() {
   // Check settings for pending UI transition (1=UI mode)
   if (core.settings.pendingTransition == 1) {
     LOG_INF(TAG, "Pending UI transition, returnTo=%d", core.settings.transitionReturnTo);
+    powerdebug::logf("bootmode.pending_ui", "return_to=%u", static_cast<unsigned>(core.settings.transitionReturnTo));
 
     // Cache transition info before clearing (so initUIMode can detect mode transition)
     cachedTransition.magic = ModeTransition::MAGIC;
@@ -46,6 +48,8 @@ BootMode detectBootMode() {
       SdMan.exists(core.settings.lastBookPath)) {
     LOG_INF(TAG, "Pending Reader transition: path=%s, returnTo=%d", core.settings.lastBookPath,
             core.settings.transitionReturnTo);
+    powerdebug::logf("bootmode.pending_reader", "return_to=%u path=%s",
+                     static_cast<unsigned>(core.settings.transitionReturnTo), core.settings.lastBookPath);
 
     // Set up cached transition for reader mode
     cachedTransition.magic = ModeTransition::MAGIC;
@@ -66,12 +70,14 @@ BootMode detectBootMode() {
       SdMan.exists(core.settings.lastBookPath)) {
     if (core.settings.lastBookBootGuard) {
       LOG_ERR(TAG, "Previous last-document startup did not complete, booting UI: %s", core.settings.lastBookPath);
+      powerdebug::logf("bootmode.last_document_guard", "path=%s", core.settings.lastBookPath);
       core.settings.lastBookBootGuard = 0;
       core.settings.saveToFile();
       return BootMode::UI;
     }
 
     LOG_INF(TAG, "'Last Document' startup: %s", core.settings.lastBookPath);
+    powerdebug::logf("bootmode.last_document_startup", "path=%s", core.settings.lastBookPath);
 
     // Set up cached transition for reader mode
     cachedTransition.magic = ModeTransition::MAGIC;
@@ -86,17 +92,22 @@ BootMode detectBootMode() {
     // usable state; if it is still set on the next boot, we fall back to UI.
     core.settings.lastBookBootGuard = 1;
     core.settings.saveToFile();
+    powerdebug::logSettingsSnapshot("bootmode.last_document_guard_set", core.settings);
 
     return BootMode::READER;
   }
 
   LOG_DBG(TAG, "No transition pending, using default UI mode");
+  powerdebug::logEvent("bootmode.default_ui");
   return BootMode::UI;
 }
 
 const ModeTransition& getTransition() { return cachedTransition; }
 
 void saveTransition(BootMode mode, const char* bookPath, ReturnTo returnTo) {
+  powerdebug::logf("bootmode.save_transition_start", "mode=%u return_to=%u path_arg=%s current_last=%s",
+                   static_cast<unsigned>(mode), static_cast<unsigned>(returnTo), bookPath ? bookPath : "",
+                   core.settings.lastBookPath);
   // Only set lastBookPath when transitioning to Reader mode
   // For UI transitions, keep existing lastBookPath for "Continue reading"
   if (mode == BootMode::READER && bookPath && bookPath[0] != '\0') {
@@ -108,15 +119,18 @@ void saveTransition(BootMode mode, const char* bookPath, ReturnTo returnTo) {
   core.settings.pendingTransition = (mode == BootMode::UI) ? 1 : 2;
   core.settings.transitionReturnTo = static_cast<uint8_t>(returnTo);
   core.settings.saveToFile();
+  powerdebug::logSettingsSnapshot("bootmode.save_transition_done", core.settings);
 
   LOG_INF(TAG, "Saved transition to settings: mode=%d, returnTo=%d, path=%s", static_cast<int>(mode),
           static_cast<int>(returnTo), core.settings.lastBookPath);
 }
 
 void clearTransition() {
+  powerdebug::logSettingsSnapshot("bootmode.clear_transition_before", core.settings);
   core.settings.pendingTransition = 0;
   core.settings.transitionReturnTo = 0;
   core.settings.saveToFile();
+  powerdebug::logSettingsSnapshot("bootmode.clear_transition_after", core.settings);
   LOG_DBG(TAG, "Cleared pending transition");
 }
 

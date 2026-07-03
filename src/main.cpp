@@ -48,6 +48,7 @@
 #include "core/BootMode.h"
 #include "core/Core.h"
 #include "core/FirmwareUpdater.h"
+#include "core/PowerDebug.h"
 #include "core/StateMachine.h"
 #include "images/PapyrixLogo.h"
 #include "states/AppLauncherState.h"
@@ -224,6 +225,10 @@ void verifyWakeupLongPress(esp_reset_reason_t resetReason) {
   if (abort) {
     // Button released too early. Returning to sleep.
     // IMPORTANT: Re-arm the wakeup trigger before sleeping again
+    papyrix::powerdebug::logf("boot.verify_wakeup_abort", "required=%u calibrated=%u held=%lu",
+                              static_cast<unsigned>(requiredPressDuration),
+                              static_cast<unsigned>(calibratedPressDuration), inputManager.getHeldTime());
+    papyrix::powerdebug::markRtcEvent("verify_wakeup_abort_sleep");
     esp_deep_sleep_enable_gpio_wakeup(1ULL << InputManager::POWER_BUTTON_PIN, ESP_GPIO_WAKEUP_GPIO_LOW);
     disableGpioPullsForSleep();
     esp_deep_sleep_start();
@@ -341,6 +346,8 @@ static papyrix::BootMode currentBootMode = papyrix::BootMode::UI;
 bool earlyInit() {
   pinMode(UART0_RXD, INPUT);
   inputManager.begin();
+  papyrix::powerdebug::markRtcEvent("early_init_start");
+  papyrix::powerdebug::logInputSnapshot("after_input_begin");
 
   // Detect hardware variant (X3 vs X4) before getWakeupInfo() — on X3,
   // isUsbConnected() must route through the BQ27220 fuel gauge, otherwise
@@ -348,11 +355,23 @@ bool earlyInit() {
   // "USB connected" and the usbColdBoot fast-path sleeps the device. Probe
   // only touches I²C and NVS (no SPI/SD/display), so it's safe to run here.
   papyrix::drivers::Device::instance().probe();
+  {
+    const auto probe = papyrix::drivers::Device::instance().lastProbe();
+    papyrix::powerdebug::logf("device.probe_done", "device=%s bq27220=%u ds3231=%u qmi8658=%u score=%u",
+                              papyrix::drivers::Device::instance().isX3() ? "X3" : "X4", probe.bq27220 ? 1U : 0U,
+                              probe.ds3231 ? 1U : 0U, probe.qmi8658 ? 1U : 0U,
+                              static_cast<unsigned>(probe.score));
+  }
 
   // Detect USB cold-boot before any heavy init (USB CDC, SD, settings) so a USB hotplug
   // on a powered-off device returns to sleep without a multi-second wake-up.
   const auto wakeup = getWakeupInfo();
+  papyrix::powerdebug::logBootSnapshot("pre_sd_wakeup_detected", wakeup.resetReason, esp_sleep_get_wakeup_cause(),
+                                       isUsbConnected(), wakeup.isPowerButton, wakeup.usbColdBoot,
+                                       papyrix::drivers::Device::instance().isX3(), 255, 0);
+  papyrix::powerdebug::logInputSnapshot("pre_sd_wakeup_detected");
   if (wakeup.usbColdBoot) {
+    papyrix::powerdebug::markRtcEvent("pre_sd_usb_cold_sleep");
     esp_deep_sleep_enable_gpio_wakeup(1ULL << InputManager::POWER_BUTTON_PIN, ESP_GPIO_WAKEUP_GPIO_LOW);
     disableGpioPullsForSleep();
     esp_deep_sleep_start();
@@ -360,6 +379,7 @@ bool earlyInit() {
 
   // Only start serial if USB connected
   if (isUsbConnected()) {
+    papyrix::powerdebug::markRtcEvent("serial_begin");
     Serial.begin(115200);
     delay(SERIAL_INIT_DELAY_MS);  // Allow USB CDC to initialize
     unsigned long start = millis();
@@ -370,15 +390,21 @@ bool earlyInit() {
 
   // Initialize SPI and SD card before wakeup verification so settings are available
   SPI.begin(EPD_SCLK, SD_SPI_MISO, EPD_MOSI, EPD_CS);
+  papyrix::powerdebug::markRtcEvent("sd_begin_start");
   if (!SdMan.begin()) {
     LOG_ERR(TAG, "SD card initialization failed");
     setupDisplayAndFonts();
     showErrorScreen("SD card error");
     return false;
   }
+  papyrix::powerdebug::flushRtcEvent("sd_mounted");
+  papyrix::powerdebug::logBootSnapshot("sd_mounted", wakeup.resetReason, esp_sleep_get_wakeup_cause(), isUsbConnected(),
+                                       wakeup.isPowerButton, wakeup.usbColdBoot,
+                                       papyrix::drivers::Device::instance().isX3(), 255, 0);
 
   // Emergency firmware flash from SD card (force_update.bin) — blocking, runs before any UI init
   if (SdMan.exists(PAPYRIX_EMERGENCY_FW_FILE)) {
+    papyrix::powerdebug::logEvent("firmware.emergency_update_found");
     auto& fw = papyrix::FirmwareUpdater::instance();
     fw.findFirmwareFile(PAPYRIX_EMERGENCY_FW_FILE);
     if (fw.beginUpdate()) {
@@ -398,18 +424,28 @@ bool earlyInit() {
   papyrix::core.settings.loadFromFile();
   i18n::loadLocaleFromSD(papyrix::core.settings.uiLanguage);
   rtcPowerButtonDurationMs = papyrix::core.settings.getPowerButtonDuration();
+  papyrix::powerdebug::logSettingsSnapshot("after_load", papyrix::core.settings);
+  papyrix::powerdebug::logBootSnapshot(
+      "settings_loaded", wakeup.resetReason, esp_sleep_get_wakeup_cause(), isUsbConnected(), wakeup.isPowerButton,
+      wakeup.usbColdBoot, papyrix::drivers::Device::instance().isX3(), papyrix::core.settings.shortPwrBtn,
+      rtcPowerButtonDurationMs);
 
   if (wakeup.isPowerButton) {
+    papyrix::powerdebug::logEvent("boot.verify_wakeup_start");
     verifyWakeupLongPress(wakeup.resetReason);
+    papyrix::powerdebug::logEvent("boot.verify_wakeup_done");
   }
 
   LOG_INF(TAG, "Starting Papyrix version " PAPYRIX_VERSION);
   papyrix::crashdebug::logBootInfo(wakeup.resetReason);
+  papyrix::powerdebug::logEvent("boot.crashdebug_logged");
 
   // Initialize battery ADC pin with proper attenuation for 0-3.3V range
   analogSetPinAttenuation(BAT_GPIO0, ADC_11db);
+  papyrix::powerdebug::logInputSnapshot("after_battery_adc_attenuation");
 
   // Initialize internal flash filesystem for font storage
+  papyrix::powerdebug::markRtcEvent("littlefs_begin_start");
   if (!LittleFS.begin(false)) {
     LOG_ERR(TAG, "LittleFS mount failed, attempting format");
     if (!LittleFS.format() || !LittleFS.begin(false)) {
@@ -420,6 +456,7 @@ bool earlyInit() {
     LOG_INF(TAG, "LittleFS formatted and mounted");
   } else {
     LOG_INF(TAG, "LittleFS mounted");
+    papyrix::powerdebug::logEvent("littlefs.mounted");
   }
 
   return true;
@@ -565,15 +602,25 @@ void setup() {
   // Detect boot mode from RTC memory or settings
   currentBootMode = papyrix::detectBootMode();
   papyrix::core.bootMode = currentBootMode;
+  papyrix::powerdebug::logSettingsSnapshot("after_detect_boot_mode", papyrix::core.settings);
+  papyrix::powerdebug::logf("boot.mode_detected", "mode=%s pending=%u last_guard=%u last_book=%s",
+                            currentBootMode == papyrix::BootMode::READER ? "reader" : "ui",
+                            static_cast<unsigned>(papyrix::core.settings.pendingTransition),
+                            static_cast<unsigned>(papyrix::core.settings.lastBookBootGuard),
+                            papyrix::core.settings.lastBookPath);
 
   if (currentBootMode == papyrix::BootMode::READER) {
+    papyrix::powerdebug::logEvent("boot.init_reader_mode_start");
     initReaderMode();
   } else {
+    papyrix::powerdebug::logEvent("boot.init_ui_mode_start");
     initUIMode();
   }
 
   // Ensure we're not still holding the power button before leaving setup
+  papyrix::powerdebug::logInputSnapshot("before_final_power_release_wait");
   waitForPowerRelease();
+  papyrix::powerdebug::logInputSnapshot("setup_done");
 }
 
 void loop() {
@@ -617,6 +664,10 @@ void loop() {
         powerHeldSinceMs = loopStartTime;
       }
       if (loopStartTime - powerHeldSinceMs > papyrix::core.settings.getPowerButtonDuration()) {
+        papyrix::powerdebug::logf("loop.power_long_press_sleep", "held=%lu required=%u boot_mode=%s",
+                                  loopStartTime - powerHeldSinceMs,
+                                  static_cast<unsigned>(papyrix::core.settings.getPowerButtonDuration()),
+                                  currentBootMode == papyrix::BootMode::READER ? "reader" : "ui");
         stateMachine.init(papyrix::core, papyrix::StateId::Sleep);
         return;
       }

@@ -4,6 +4,7 @@
 #include <Logging.h>
 
 #include "Core.h"
+#include "PowerDebug.h"
 
 #define TAG "STATE"
 
@@ -12,6 +13,8 @@ namespace papyrix {
 void StateMachine::init(Core& core, StateId initialState) {
   // Exit current state if one exists (e.g., when triggering sleep from any state)
   if (current_) {
+    powerdebug::logf("state.init_exit_current", "current=%d next=%d", static_cast<int>(currentId_),
+                     static_cast<int>(initialState));
     current_->exit(core);
   }
 
@@ -20,9 +23,11 @@ void StateMachine::init(Core& core, StateId initialState) {
 
   if (current_) {
     LOG_INF(TAG, "Initial state: %d", static_cast<int>(initialState));
+    powerdebug::logf("state.init_enter", "state=%d", static_cast<int>(initialState));
     current_->enter(core);
   } else {
     LOG_ERR(TAG, "No state registered for id %d", static_cast<int>(initialState));
+    powerdebug::logf("state.init_missing", "state=%d", static_cast<int>(initialState));
   }
 }
 
@@ -66,6 +71,8 @@ void StateMachine::transition(StateId next, Core& core, bool immediate) {
 
   if (!nextState) {
     LOG_ERR(TAG, "No state for id %d", static_cast<int>(next));
+    powerdebug::logf("state.transition_missing", "from=%d to=%d", static_cast<int>(currentId_),
+                     static_cast<int>(next));
     return;
   }
 
@@ -73,11 +80,14 @@ void StateMachine::transition(StateId next, Core& core, bool immediate) {
           immediate ? " (immediate)" : "");
 
   if (current_) {
+    powerdebug::logf("state.transition_exit", "from=%d to=%d immediate=%u", static_cast<int>(currentId_),
+                     static_cast<int>(next), immediate ? 1U : 0U);
     current_->exit(core);
   }
 
   currentId_ = next;
   current_ = nextState;
+  powerdebug::logf("state.transition_enter", "state=%d", static_cast<int>(next));
   current_->enter(core);
 }
 
