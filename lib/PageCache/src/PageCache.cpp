@@ -21,6 +21,11 @@ uint16_t PageCache::failSerializeCounter_ = 0;
 
 namespace {
 constexpr uint8_t CACHE_FILE_VERSION = 20;  // v20: Page serialization includes footnotes
+constexpr uint8_t CACHE_FILE_VERSION_LEGACY_NO_FOOTNOTES = 19;
+
+bool isSupportedCacheVersion(uint8_t version) {
+  return version == CACHE_FILE_VERSION || version == CACHE_FILE_VERSION_LEGACY_NO_FOOTNOTES;
+}
 
 // Header layout (offsets are absolute from start of file):
 // - version (1 byte)        @ 0
@@ -48,6 +53,7 @@ PageCache::PageCache(std::string cachePath) : cachePath_(std::move(cachePath)) {
 
 bool PageCache::writeHeader(bool isPartial) {
   file_.seek(0);
+  cacheVersion_ = CACHE_FILE_VERSION;
   serialization::writePod(file_, CACHE_FILE_VERSION);
   serialization::writePod(file_, config_.fontId);
   serialization::writePod(file_, config_.lineCompression);
@@ -105,6 +111,16 @@ bool PageCache::loadLut(std::vector<uint32_t>& lut) {
     return false;
   }
 
+  uint8_t version;
+  serialization::readPod(file_, version);
+  if (!isSupportedCacheVersion(version)) {
+    LOG_ERR(TAG, "Version mismatch: got %u, expected %u or %u", version, CACHE_FILE_VERSION,
+            CACHE_FILE_VERSION_LEGACY_NO_FOOTNOTES);
+    file_.close();
+    return false;
+  }
+  cacheVersion_ = version;
+
   // Read lutOffset from header
   file_.seek(kLutOffsetOffset);
   serialization::readPod(file_, lutOffset_);
@@ -154,11 +170,13 @@ bool PageCache::loadRaw() {
 
   uint8_t version;
   serialization::readPod(file_, version);
-  if (version != CACHE_FILE_VERSION) {
+  if (!isSupportedCacheVersion(version)) {
     file_.close();
-    LOG_ERR(TAG, "Version mismatch: got %u, expected %u", version, CACHE_FILE_VERSION);
+    LOG_ERR(TAG, "Version mismatch: got %u, expected %u or %u", version, CACHE_FILE_VERSION,
+            CACHE_FILE_VERSION_LEGACY_NO_FOOTNOTES);
     return false;
   }
+  cacheVersion_ = version;
 
   // Skip config fields, read pageCount and isPartial
   file_.seek(kPageCountOffset);
@@ -184,12 +202,13 @@ bool PageCache::load(const RenderConfig& config) {
   // Read and validate header
   uint8_t version;
   serialization::readPod(file_, version);
-  if (version != CACHE_FILE_VERSION) {
+  if (!isSupportedCacheVersion(version)) {
     file_.close();
-    LOG_ERR(TAG, "Version mismatch: got %u, expected %u", version, CACHE_FILE_VERSION);
-    clear();
+    LOG_ERR(TAG, "Version mismatch: got %u, expected %u or %u", version, CACHE_FILE_VERSION,
+            CACHE_FILE_VERSION_LEGACY_NO_FOOTNOTES);
     return false;
   }
+  cacheVersion_ = version;
 
   RenderConfig fileConfig;
   serialization::readPod(file_, fileConfig.fontId);
@@ -264,6 +283,7 @@ bool PageCache::create(ContentParser& parser, const RenderConfig& config, uint16
     config_ = config;
     pageCount_ = 0;
     isPartial_ = false;
+    cacheVersion_ = CACHE_FILE_VERSION;
 
     // Write placeholder header
     writeHeader(false);
@@ -583,9 +603,19 @@ std::unique_ptr<Page> PageCache::loadPage(uint16_t pageNum) {
       continue;
     }
 
+    uint8_t version;
+    file_.seek(0);
+    serialization::readPod(file_, version);
+    if (!isSupportedCacheVersion(version)) {
+      LOG_ERR(TAG, "Version mismatch while loading page: %u", version);
+      file_.close();
+      continue;
+    }
+    const bool hasFootnotes = (version >= CACHE_FILE_VERSION);
+
     // Read page
     file_.seek(pagePos);
-    auto page = Page::deserialize(file_);
+    auto page = Page::deserialize(file_, hasFootnotes);
     file_.close();
 
     if (page) return page;
@@ -610,7 +640,7 @@ PageCache::ProbeResult PageCache::probe(const std::string& cachePath, const Rend
 
   uint8_t version;
   serialization::readPod(file, version);
-  if (version != CACHE_FILE_VERSION) {
+  if (!isSupportedCacheVersion(version)) {
     file.close();
     return result;
   }

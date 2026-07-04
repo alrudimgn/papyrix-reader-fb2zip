@@ -625,20 +625,12 @@ void ReaderState::createOrExtendCacheImpl(ContentParser& parser, const std::stri
   if (!pageCache_) {
     pageCache_.reset(new PageCache(cachePath));
     if (pageCache_->load(config)) {
-      if (!SdMan.exists((cachePath + ".anchors").c_str())) {
-        needsCreate = true;  // Migration: rebuild cache to generate anchor map
-      } else {
-        needsExtend = pageCache_->isPartial();
-      }
+      needsExtend = pageCache_->isPartial();
     } else {
       needsCreate = true;
     }
   } else {
-    if (!SdMan.exists((cachePath + ".anchors").c_str())) {
-      needsCreate = true;  // Migration: rebuild cache to generate anchor map
-    } else {
-      needsExtend = pageCache_->isPartial();
-    }
+    needsExtend = pageCache_->isPartial();
   }
 
   if (pageCache_) {
@@ -670,10 +662,6 @@ void ReaderState::backgroundCacheImpl(ContentParser& parser, const std::string& 
   // Create/load cache (we own pageCache_ while task is running)
   pageCache_.reset(new PageCache(cachePath));
   bool loaded = pageCache_->load(config);
-  // Migration: rebuild cache to generate anchor map if missing
-  if (loaded && !SdMan.exists((cachePath + ".anchors").c_str())) {
-    loaded = false;
-  }
   bool needsExtend = loaded && pageCache_->needsExtension(currentSectionPage_);
 
   // Check for abort after setup

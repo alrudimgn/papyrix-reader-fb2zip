@@ -38,6 +38,7 @@ class PageCache {
   // waiting for the next extend.
   uint32_t bytesConsumed_ = 0;
   uint32_t totalBytes_ = 0;
+  uint8_t cacheVersion_ = 0;
 
   bool writeHeader(bool isPartial);
   bool writeLut(const std::vector<uint32_t>& lut);

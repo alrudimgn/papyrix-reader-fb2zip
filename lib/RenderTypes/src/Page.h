@@ -76,7 +76,7 @@ class Page {
   void render(GfxRenderer& renderer, int fontId, int xOffset, int yOffset, bool black = true) const;
   void warmGlyphs(const GfxRenderer& renderer, int fontId) const;
   bool serialize(FsFile& file) const;
-  static std::unique_ptr<Page> deserialize(FsFile& file);
+  static std::unique_ptr<Page> deserialize(FsFile& file, bool hasFootnotes = true);
 
   bool hasImages() const {
     return std::any_of(elements.begin(), elements.end(),

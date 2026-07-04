@@ -127,7 +127,7 @@ bool Page::serialize(FsFile& file) const {
   return true;
 }
 
-std::unique_ptr<Page> Page::deserialize(FsFile& file) {
+std::unique_ptr<Page> Page::deserialize(FsFile& file, bool hasFootnotes) {
   auto page = std::unique_ptr<Page>(new Page());
 
   // Max elements per page - prevents memory exhaustion from corrupted cache
@@ -164,6 +164,10 @@ std::unique_ptr<Page> Page::deserialize(FsFile& file) {
       LOG_ERR(TAG, "Deserialization failed: Unknown tag %u", tag);
       return nullptr;
     }
+  }
+
+  if (!hasFootnotes) {
+    return page;
   }
 
   uint16_t footnoteCount;
