@@ -32,6 +32,7 @@
 #include "../content/ReaderNavigation.h"
 #include "../core/BootMode.h"
 #include "../core/Core.h"
+#include "../core/PowerDebug.h"
 #include "../drivers/Device.h"
 #include "../ui/Elements.h"
 #include "../ui/views/ReaderViews.h"
@@ -759,6 +760,10 @@ void ReaderState::setContentPath(const char* path) {
 }
 
 void ReaderState::enter(Core& core) {
+  powerdebug::markRtcEvent("reader.enter_start");
+  powerdebug::logf("reader.enter_start", "buf_path=%s content_path=%s guard=%u", core.buf.path, contentPath_,
+                   static_cast<unsigned>(core.settings.lastBookBootGuard));
+
   // Free memory from other states before loading book
   THEME_MANAGER.clearCache();
   renderer_.clearWidthCache();
@@ -794,9 +799,11 @@ void ReaderState::enter(Core& core) {
       (transition.isValid() && transition.returnTo == ReturnTo::FILE_MANAGER) ? StateId::FileList : StateId::Home;
 
   LOG_INF(TAG, "Entering with path: %s", contentPath_);
+  powerdebug::logf("reader.path_ready", "path=%s source=%d", contentPath_, static_cast<int>(sourceState_));
 
   if (contentPath_[0] == '\0') {
     LOG_ERR(TAG, "No content path set");
+    powerdebug::logEvent("reader.no_content_path");
     return;
   }
 
@@ -818,23 +825,33 @@ void ReaderState::enter(Core& core) {
       renderer_.setOrientation(GfxRenderer::Orientation::Portrait);
       break;
   }
+  powerdebug::logf("reader.orientation_done", "orientation=%u", static_cast<unsigned>(core.settings.orientation));
 
   // Open content using ContentHandle
+  powerdebug::markRtcEvent("reader.content_open_start");
+  powerdebug::logf("reader.content_open_start", "path=%s cache_dir=%s", contentPath_,
+                   papyrix::drivers::Device::instance().cacheDir());
   auto result = core.content.open(contentPath_, papyrix::drivers::Device::instance().cacheDir());
   if (!result.ok()) {
     LOG_ERR(TAG, "Failed to open content: %s", errorToString(result.err));
+    powerdebug::logf("reader.content_open_failed", "err=%s", errorToString(result.err));
     // Store error message for ErrorState to display
     snprintf(core.buf.text, sizeof(core.buf.text), "Cannot open file:\n%s", errorToString(result.err));
     loadFailed_ = true;  // Mark as failed for update() to transition to error state
     return;
   }
+  powerdebug::logf("reader.content_open_done", "type=%d title=%s cache_dir=%s",
+                   static_cast<int>(core.content.metadata().type), core.content.metadata().title,
+                   core.content.cacheDir());
 
   contentLoaded_ = true;
 
   // Save last book path to settings
   strncpy(core.settings.lastBookPath, contentPath_, sizeof(core.settings.lastBookPath) - 1);
   core.settings.lastBookPath[sizeof(core.settings.lastBookPath) - 1] = '\0';
+  powerdebug::logEvent("reader.save_last_book_start");
   core.settings.save(core.storage);
+  powerdebug::logSettingsSnapshot("reader.save_last_book_done", core.settings);
 
   // Setup cache directories for all content types
   // Reset state for new book
@@ -868,10 +885,12 @@ void ReaderState::enter(Core& core) {
       break;
     }
     case ContentType::Fb2: {
+      powerdebug::logEvent("reader.setup_cache_fb2_start");
       auto* provider = core.content.asFb2();
       if (provider && provider->getFb2()) {
         provider->getFb2()->setupCacheDir();
       }
+      powerdebug::logEvent("reader.setup_cache_fb2_done");
       break;
     }
     case ContentType::Html: {
@@ -887,13 +906,22 @@ void ReaderState::enter(Core& core) {
 
   // Load saved progress
   ContentType type = core.content.metadata().type;
+  powerdebug::markRtcEvent("reader.progress_load_start");
+  powerdebug::logf("reader.progress_load_start", "cache_dir=%s type=%d", core.content.cacheDir(),
+                   static_cast<int>(type));
   auto progress = ProgressManager::load(core, core.content.cacheDir(), type);
+  powerdebug::logf("reader.progress_load_done", "spine=%d section=%d flat=%lu", progress.spineIndex,
+                   progress.sectionPage, static_cast<unsigned long>(progress.flatPage));
   progress = ProgressManager::validate(core, type, progress);
+  powerdebug::logf("reader.progress_validate_done", "spine=%d section=%d flat=%lu", progress.spineIndex,
+                   progress.sectionPage, static_cast<unsigned long>(progress.flatPage));
   currentSpineIndex_ = progress.spineIndex;
   currentSectionPage_ = progress.sectionPage;
   currentPage_ = progress.flatPage;
 
+  powerdebug::logEvent("reader.bookmarks_load_start");
   bookmarkCount_ = BookmarkManager::load(core, core.content.cacheDir(), bookmarks_, BookmarkManager::MAX_BOOKMARKS);
+  powerdebug::logf("reader.bookmarks_load_done", "count=%u", static_cast<unsigned>(bookmarkCount_));
 
   // If at start of book and showImages enabled, begin at cover
   // Skip for XTC — uses flat page indexing, no cover page concept in reader
@@ -906,6 +934,9 @@ void ReaderState::enter(Core& core) {
   lastRenderedSectionPage_ = currentSectionPage_;
 
   LOG_INF(TAG, "Loaded: %s", core.content.metadata().title);
+  powerdebug::logf("reader.loaded", "type=%d title=%s spine=%d section=%d flat=%lu guard=%u",
+                   static_cast<int>(type), core.content.metadata().title, currentSpineIndex_, currentSectionPage_,
+                   static_cast<unsigned long>(currentPage_), static_cast<unsigned>(core.settings.lastBookBootGuard));
 
   // Full book pre-processing: index all pages before reading. Skip it for
   // automatic last-document startup; resume should be fast and must not get
@@ -914,18 +945,26 @@ void ReaderState::enter(Core& core) {
   const bool automaticLastBookStartup = core.settings.lastBookBootGuard != 0;
   if (!automaticLastBookStartup && core.settings.fullBookProcess && entryType != ContentType::Xtc &&
       !isFullyIndexed(core)) {
+    powerdebug::logEvent("reader.full_indexing_start");
     startFullBookIndexing(core);
     return;
   }
 
   // Start background caching (includes thumbnail generation)
   // This runs once per book open regardless of starting position
+  powerdebug::markRtcEvent("reader.background_caching_start");
+  powerdebug::logEvent("reader.background_caching_start");
   startBackgroundCaching(core);
+  powerdebug::logEvent("reader.background_caching_done");
 
   if (core.settings.lastBookBootGuard) {
+    powerdebug::logEvent("reader.clear_boot_guard_start");
     core.settings.lastBookBootGuard = 0;
     core.settings.save(core.storage);
+    powerdebug::logSettingsSnapshot("reader.clear_boot_guard_done", core.settings);
   }
+  powerdebug::markRtcEvent("reader.enter_done");
+  powerdebug::logEvent("reader.enter_done");
 }
 
 void ReaderState::exit(Core& core) {
@@ -968,6 +1007,14 @@ void ReaderState::exit(Core& core) {
 }
 
 StateTransition ReaderState::update(Core& core) {
+  static uint32_t updateLogCount = 0;
+  if (updateLogCount < 6) {
+    powerdebug::logf("reader.update_start", "count=%lu loaded=%u needs_render=%u indexing=%u spine=%d section=%d",
+                     static_cast<unsigned long>(updateLogCount), contentLoaded_ ? 1U : 0U, needsRender_ ? 1U : 0U,
+                     indexingInProgress_ ? 1U : 0U, currentSpineIndex_, currentSectionPage_);
+    updateLogCount++;
+  }
+
   // Auto-dismiss bookmark notification after ~1s
   if (bookmarkNotifyMs_ != 0 && millis() - bookmarkNotifyMs_ >= 1000) {
     bookmarkNotifyMs_ = 0;
@@ -1144,6 +1191,10 @@ void ReaderState::render(Core& core) {
     return;
   }
 
+  powerdebug::logf("reader.render_start", "indexing=%u menu=%u footnote=%u bookmark=%u toc=%u spine=%d section=%d",
+                   indexingInProgress_ ? 1U : 0U, menuMode_ ? 1U : 0U, footnoteMode_ ? 1U : 0U,
+                   bookmarkMode_ ? 1U : 0U, tocMode_ ? 1U : 0U, currentSpineIndex_, currentSectionPage_);
+
   if (indexingInProgress_) {
     renderIndexingScreen(core);
     needsRender_ = false;
@@ -1161,12 +1212,16 @@ void ReaderState::render(Core& core) {
   } else if (tocMode_) {
     renderTocOverlay(core);
   } else {
+    powerdebug::markRtcEvent("reader.render_current_page_start");
     renderCurrentPage(core);
+    powerdebug::logEvent("reader.render_current_page_done");
     lastRenderedSpineIndex_ = currentSpineIndex_;
     lastRenderedSectionPage_ = currentSectionPage_;
   }
 
   needsRender_ = false;
+  powerdebug::logf("reader.render_done", "last_spine=%d last_section=%d", lastRenderedSpineIndex_,
+                   lastRenderedSectionPage_);
 }
 
 void ReaderState::navigateNext(Core& core) {
@@ -1409,6 +1464,8 @@ void ReaderState::navigatePrevChapter(Core& core) {
 void ReaderState::renderCurrentPage(Core& core) {
   ContentType type = core.content.metadata().type;
   const Theme& theme = THEME_MANAGER.current();
+  powerdebug::logf("reader.render_page_start", "type=%d spine=%d section=%d page=%lu", static_cast<int>(type),
+                   currentSpineIndex_, currentSectionPage_, static_cast<unsigned long>(currentPage_));
 
   // Always clear screen first (prevents previous content from showing through)
   renderer_.clearScreen(theme.backgroundColor);
@@ -1416,11 +1473,14 @@ void ReaderState::renderCurrentPage(Core& core) {
   // Cover page: spineIndex=0, sectionPage=-1 (only when showImages enabled)
   if (currentSpineIndex_ == 0 && currentSectionPage_ == -1) {
     if (core.settings.showImages) {
+      powerdebug::logEvent("reader.render_cover_start");
       if (renderCoverPage(core)) {
+        powerdebug::logEvent("reader.render_cover_done");
         hasCover_ = true;
         core.display.markDirty();
         return;
       }
+      powerdebug::logEvent("reader.render_cover_missing");
       // No cover - skip spine 0 if textStartIndex is 0 (likely empty cover document)
       hasCover_ = false;
       currentSectionPage_ = 0;
@@ -1467,12 +1527,15 @@ void ReaderState::renderCurrentPage(Core& core) {
   }
 
   core.display.markDirty();
+  powerdebug::logEvent("reader.render_page_done");
 }
 
 void ReaderState::renderCachedPage(Core& core) {
   Theme& theme = THEME_MANAGER.mutableCurrent();
   ContentType type = core.content.metadata().type;
   const auto vp = getReaderViewport(core.settings.statusBar != 0);
+  powerdebug::logf("reader.render_cached_start", "type=%d spine=%d section=%d", static_cast<int>(type),
+                   currentSpineIndex_, currentSectionPage_);
 
   // Handle EPUB/FB2 bounds
   if (type == ContentType::Epub || type == ContentType::Fb2) {
@@ -1497,6 +1560,7 @@ void ReaderState::renderCachedPage(Core& core) {
 
   // Stop background task to ensure we own pageCache_ (ownership model)
   stopBackgroundCaching();
+  powerdebug::logEvent("reader.render_cached_background_stopped");
 
   // Background task may have left parser in inconsistent state
   if (!pageCache_ && parser_ && parserSpineIndex_ == currentSpineIndex_) {
@@ -1507,7 +1571,10 @@ void ReaderState::renderCachedPage(Core& core) {
   // Create or load cache if needed
   if (!pageCache_) {
     // Try to load existing cache silently first
+    powerdebug::logEvent("reader.load_cache_from_disk_start");
     loadCacheFromDisk(core);
+    powerdebug::logf("reader.load_cache_from_disk_done", "has_cache=%u pages=%u", pageCache_ ? 1U : 0U,
+                     pageCache_ ? static_cast<unsigned>(pageCache_->pageCount()) : 0U);
 
     bool pageIsCached =
         pageCache_ && currentSectionPage_ >= 0 && currentSectionPage_ < static_cast<int>(pageCache_->pageCount());
@@ -1518,13 +1585,21 @@ void ReaderState::renderCachedPage(Core& core) {
       ui::centeredMessage(renderer_, theme, core.settings.getReaderFontId(theme), tr(INDEXING));
       renderer_.displayBuffer();
 
+      powerdebug::markRtcEvent("reader.create_or_extend_cache_start");
+      powerdebug::logEvent("reader.create_or_extend_cache_start");
       createOrExtendCache(core);
+      powerdebug::logf("reader.create_or_extend_cache_done", "has_cache=%u pages=%u partial=%u",
+                       pageCache_ ? 1U : 0U, pageCache_ ? static_cast<unsigned>(pageCache_->pageCount()) : 0U,
+                       pageCache_ && pageCache_->isPartial() ? 1U : 0U);
 
       // Backward navigation: cache entire chapter to find actual last page
       if (currentSectionPage_ == INT16_MAX) {
         while (pageCache_ && pageCache_->isPartial()) {
           const size_t pagesBefore = pageCache_->pageCount();
+          powerdebug::logf("reader.extend_backfill_start", "pages_before=%u", static_cast<unsigned>(pagesBefore));
           createOrExtendCache(core);
+          powerdebug::logf("reader.extend_backfill_done", "pages_after=%u",
+                           pageCache_ ? static_cast<unsigned>(pageCache_->pageCount()) : 0U);
           if (pageCache_ && pageCache_->pageCount() <= pagesBefore) {
             break;  // No progress - avoid infinite loop
           }
@@ -1548,6 +1623,7 @@ void ReaderState::renderCachedPage(Core& core) {
 
   // Check if we need to extend cache
   if (!ensurePageCached(core, currentSectionPage_)) {
+    powerdebug::logEvent("reader.ensure_page_cached_failed");
     renderer_.drawCenteredText(core.settings.getReaderFontId(theme), 300, tr(FAILED_TO_LOAD_PAGE),
                                theme.primaryTextBlack, BOLD);
     renderer_.displayBuffer();
@@ -1557,13 +1633,17 @@ void ReaderState::renderCachedPage(Core& core) {
 
   // ensurePageCached may have used the frame buffer as ZIP decompression dictionary
   renderer_.clearScreen(theme.backgroundColor);
+  powerdebug::logEvent("reader.ensure_page_cached_done");
 
   // Load and render page (cache is now guaranteed to exist, we own it)
   size_t pageCount = pageCache_ ? pageCache_->pageCount() : 0;
+  powerdebug::logf("reader.load_page_start", "section=%d page_count=%u", currentSectionPage_,
+                   static_cast<unsigned>(pageCount));
   auto page = pageCache_ ? pageCache_->loadPage(currentSectionPage_) : nullptr;
 
   if (!page) {
     LOG_ERR(TAG, "Failed to load page, clearing cache");
+    powerdebug::logEvent("reader.load_page_failed");
     if (pageCache_) {
       pageCache_->clear();
       pageCache_.reset();
@@ -1571,14 +1651,20 @@ void ReaderState::renderCachedPage(Core& core) {
     needsRender_ = true;
     return;
   }
+  powerdebug::logf("reader.load_page_done", "footnotes=%u has_images=%u", static_cast<unsigned>(page->footnotes.size()),
+                   page->hasImages() ? 1U : 0U);
   currentPageFootnotes_ = page->footnotes;
 
   const int fontId = core.settings.getReaderFontId(theme);
 
+  powerdebug::logEvent("reader.warm_glyphs_start");
   page->warmGlyphs(renderer_, fontId);
+  powerdebug::logEvent("reader.warm_glyphs_done");
 
+  powerdebug::logEvent("reader.page_render_contents_start");
   renderPageContents(core, *page, vp.marginTop, vp.marginRight, vp.marginBottom, vp.marginLeft);
   renderStatusBar(core, vp.marginRight, vp.marginBottom, vp.marginLeft);
+  powerdebug::logEvent("reader.page_render_contents_done");
 
   const bool aaEnabled = core.settings.textAntiAliasing && renderer_.fontSupportsGrayscale(fontId);
   const bool imagePageWithAA = aaEnabled && page->hasImages();
@@ -1606,6 +1692,7 @@ void ReaderState::renderCachedPage(Core& core) {
   } else {
     displayWithRefresh(core);
   }
+  powerdebug::logEvent("reader.display_with_refresh_done");
 
   // Grayscale text rendering (anti-aliasing)
   if (aaEnabled) {
@@ -1633,9 +1720,13 @@ void ReaderState::renderCachedPage(Core& core) {
   }
 
   LOG_DBG(TAG, "Rendered page %d/%d", currentSectionPage_ + 1, pageCount);
+  powerdebug::logf("reader.render_cached_done", "section=%d page_count=%u", currentSectionPage_,
+                   static_cast<unsigned>(pageCount));
 }
 
 bool ReaderState::ensurePageCached(Core& core, uint16_t pageNum) {
+  powerdebug::logf("reader.ensure_page_cached_start", "page=%u has_cache=%u", static_cast<unsigned>(pageNum),
+                   pageCache_ ? 1U : 0U);
   // Caller must have stopped background task (we own pageCache_)
   if (!pageCache_) {
     return false;
@@ -1649,7 +1740,11 @@ bool ReaderState::ensurePageCached(Core& core, uint16_t pageNum) {
   if (pageNum < pageCount) {
     if (needsExtension) {
       LOG_DBG(TAG, "Pre-extending cache at page %d", pageNum);
+      powerdebug::logf("reader.ensure_preextend_start", "page=%u pages=%u", static_cast<unsigned>(pageNum),
+                       static_cast<unsigned>(pageCount));
       createOrExtendCache(core);
+      powerdebug::logf("reader.ensure_preextend_done", "pages=%u",
+                       pageCache_ ? static_cast<unsigned>(pageCache_->pageCount()) : 0U);
     }
     return pageCache_ && pageNum < pageCache_->pageCount();
   }
@@ -1665,7 +1760,11 @@ bool ReaderState::ensurePageCached(Core& core, uint16_t pageNum) {
   const Theme& theme = THEME_MANAGER.current();
   ui::centeredMessage(renderer_, theme, core.settings.getReaderFontId(theme), tr(LOADING));
 
+  powerdebug::logf("reader.ensure_extend_start", "page=%u pages=%u partial=%u", static_cast<unsigned>(pageNum),
+                   static_cast<unsigned>(pageCount), isPartial ? 1U : 0U);
   createOrExtendCache(core);
+  powerdebug::logf("reader.ensure_extend_done", "pages=%u",
+                   pageCache_ ? static_cast<unsigned>(pageCache_->pageCount()) : 0U);
 
   pageCount = pageCache_ ? pageCache_->pageCount() : 0;
   return pageNum < pageCount;
